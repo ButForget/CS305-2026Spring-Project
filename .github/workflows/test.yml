@@ -34,14 +34,12 @@ jobs:
           echo $! > /tmp/controller.pid
           sleep 3
 
-      - name: DHCP test
-        run: sudo env "PATH=$PATH" python tests/dhcp_test/test_ci.py
-
-      - name: Switching test
-        run: sudo env "PATH=$PATH" python tests/switching_test/test_ci.py
-
-      - name: Firewall test
-        run: sudo env "PATH=$PATH" python tests/firewall_test/test_ci.py
+      - name: Run CI tests
+        run: |
+          for f in tests/*_test/ci/*.py; do
+            echo "=== Running $f ==="
+            sudo env "PATH=$PATH" python "$f"
+          done
 
       - name: Cleanup
         if: always()
