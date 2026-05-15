@@ -1,0 +1,57 @@
+name: Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3-dev libxml2-dev \
+            libxslt1-dev zlib1g-dev pkg-config arping openvswitch-switch
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Start OVS and controller
+        run: |
+          sudo service openvswitch-switch start
+          osken-manager --observe-links controller.py --verbose > /tmp/controller.log 2>&1 &
+          echo $! > /tmp/controller.pid
+          sleep 3
+
+      - name: DHCP test
+        run: sudo env "PATH=$PATH" python tests/dhcp_test/test_ci.py
+
+      - name: Switching test
+        run: sudo env "PATH=$PATH" python tests/switching_test/test_ci.py
+
+      - name: Firewall test
+        run: sudo env "PATH=$PATH" python tests/firewall_test/test_ci.py
+
+      - name: Cleanup
+        if: always()
+        run: |
+          sudo mn -c || true
+          cat /tmp/controller.pid 2>/dev/null | xargs -r kill 2>/dev/null || true
+
+      - name: Upload controller logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-logs
+          path: /tmp/controller.log
