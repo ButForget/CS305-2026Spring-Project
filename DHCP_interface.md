@@ -23,8 +23,10 @@ Initialized lazily on first `handle_dhcp()` call via `_init_pool()`.
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `_ip_pool` | `collections.deque` | FIFO queue of available IP strings. Initialized from `start_ip` → `end_ip` inclusive. |
+| `_ip_pool_set` | `set[str]` | Membership-tracking set for currently available IPs in `_ip_pool`; used to prevent duplicate re-enqueue/reinsertion of the same IP. |
 | `_leases` | `dict[str -> dict]` | Active leases: `{ip: {"mac": mac, "start_time": float, "lease_time": int}}` (bonus) |
 | `_mac_bindings` | `dict[str -> str]` | Reverse mapping: `{mac: ip}` for fast duplicate detection (bonus) |
+| `_offered` | `dict[str -> str]` | Pending DHCP offers not yet committed as active leases; tracks offered addresses by client, e.g. `{mac: ip}` until request/ack completes or the offer is reclaimed. |
 
 ---
 

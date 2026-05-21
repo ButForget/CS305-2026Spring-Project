@@ -82,9 +82,12 @@ class DHCPServer():
 
     @classmethod
     def _is_pool_ip(cls, ip):
-        ip_int = struct.unpack('!I', socket.inet_aton(ip))[0]
-        start_int = struct.unpack('!I', socket.inet_aton(Config.start_ip))[0]
-        end_int = struct.unpack('!I', socket.inet_aton(Config.end_ip))[0]
+        try:
+            ip_int = struct.unpack('!I', socket.inet_aton(ip))[0]
+            start_int = struct.unpack('!I', socket.inet_aton(Config.start_ip))[0]
+            end_int = struct.unpack('!I', socket.inet_aton(Config.end_ip))[0]
+        except (OSError, TypeError):
+            return False
         return start_int <= ip_int <= end_int
 
     @classmethod
