@@ -30,6 +30,7 @@ class DHCPServer():
     dns = Config.dns
 
     _ip_pool = None
+    _ip_pool_set = None
     _leases = {}
     _mac_bindings = {}
     _offered = {}
@@ -40,10 +41,13 @@ class DHCPServer():
         if cls._pool_initialized:
             return
         cls._ip_pool = collections.deque()
+        cls._ip_pool_set = set()
         start = struct.unpack('!I', socket.inet_aton(Config.start_ip))[0]
         end = struct.unpack('!I', socket.inet_aton(Config.end_ip))[0]
         for i in range(start, end + 1):
-            cls._ip_pool.append(socket.inet_ntoa(struct.pack('!I', i)))
+            ip = socket.inet_ntoa(struct.pack('!I', i))
+            cls._ip_pool.append(ip)
+            cls._ip_pool_set.add(ip)
         cls._pool_initialized = True
 
     @classmethod
@@ -66,7 +70,9 @@ class DHCPServer():
             del cls._leases[ip]
         if mac and mac in cls._mac_bindings and cls._mac_bindings[mac] == ip:
             del cls._mac_bindings[mac]
-        cls._ip_pool.append(ip)
+        if ip not in cls._ip_pool_set:
+            cls._ip_pool.append(ip)
+            cls._ip_pool_set.add(ip)
 
     @classmethod
     def _is_ip_available(cls, ip, mac):
@@ -136,6 +142,7 @@ class DHCPServer():
                     cls._ip_pool.remove(requested_ip)
                 except ValueError:
                     pass
+                cls._ip_pool_set.discard(requested_ip)
                 cls._leases[requested_ip] = {
                     'mac': client_mac,
                     'start_time': time.time(),
