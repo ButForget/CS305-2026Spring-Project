@@ -75,6 +75,13 @@ class DHCPServer():
             cls._ip_pool_set.add(ip)
 
     @classmethod
+    def _is_pool_ip(cls, ip):
+        ip_int = struct.unpack('!I', socket.inet_aton(ip))[0]
+        start_int = struct.unpack('!I', socket.inet_aton(Config.start_ip))[0]
+        end_int = struct.unpack('!I', socket.inet_aton(Config.end_ip))[0]
+        return start_int <= ip_int <= end_int
+
+    @classmethod
     def _is_ip_available(cls, ip, mac):
         if ip not in cls._leases:
             return True
@@ -136,6 +143,10 @@ class DHCPServer():
                     return
                 requested_ip = dhcp_obj.ciaddr
             if cls._is_ip_available(requested_ip, client_mac):
+                if not cls._is_pool_ip(requested_ip):
+                    nak = cls.assemble_nak(pkt, datapath)
+                    cls._send_packet(datapath, port, nak)
+                    return
                 if requested_ip in cls._offered:
                     del cls._offered[requested_ip]
                 try:
