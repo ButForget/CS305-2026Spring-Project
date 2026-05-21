@@ -292,7 +292,7 @@ def test_duplicate_ip(net):
                 print("FAIL: h2 obtained duplicate IP %s with no NAK" % ip_h1)
                 passed = False
         else:
-            print("PASS: h2 was assigned different IP %s (duplicate rejected)" % ip_h1)
+            print("PASS: h2 was assigned different IP %s (duplicate rejected)" % ip_h2)
     else:
         if nak_received:
             print("PASS: server sent NAK (h2 has no valid IP, expected)")
