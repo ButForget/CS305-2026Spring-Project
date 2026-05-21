@@ -245,14 +245,17 @@ dhcp.DHCP_NAK            = 6    # may be DHCP_NAK or DHCP_NACK
 dhcp.DHCP_RELEASE        = 7
 dhcp.DHCP_BOOT_REQUEST   = 1    # op field
 dhcp.DHCP_BOOT_REPLY     = 2    # op field
-dhcp.DHCP_MESSAGE_TYPE_OPT = 53
-dhcp.DHCP_SUBNET_MASK_OPT  = 1
-dhcp.DHCP_GATEWAY_OPT      = 3
-dhcp.DHCP_DNS_OPT          = 6
-dhcp.DHCP_REQUESTED_IP_OPT = 50
-dhcp.DHCP_LEASE_TIME_OPT   = 51
-dhcp.DHCP_SERVER_ID_OPT    = 54
-dhcp.DHCP_MESSAGE_OPT      = 56
+
+# DHCP option codes (documented numerically here to avoid mismatched
+# os_ken constant names in copy/paste examples)
+subnet mask            = 1
+router/gateway         = 3
+DNS server             = 6
+message type           = 53
+requested IP address   = 50
+lease time             = 51
+server identifier      = 54
+error/message text     = 56
 ```
 
 ## 8. Integration with `controller.py`
