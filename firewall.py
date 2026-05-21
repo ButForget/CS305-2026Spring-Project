@@ -81,7 +81,7 @@ class Firewall:
                         action=item.get("action", "deny")
                     ))
         except (FileNotFoundError, json.JSONDecodeError):
-            print(Exception(f"Failed to load firewall rules from {rule_file}"))
+            print(f"Error: Failed to load firewall rules from {rule_file}\n")     
 
         return rules
 
