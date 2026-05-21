@@ -183,6 +183,8 @@ class DHCPServer():
                        if opt.tag == dhcp.DHCP_REQUESTED_IP_ADDR_OPT]
         if req_ip_opts:
             ack_ip = addrconv.ipv4.bin_to_text(req_ip_opts[0].value)
+        elif dhcp_obj.ciaddr and dhcp_obj.ciaddr != '0.0.0.0':
+            ack_ip = dhcp_obj.ciaddr
         else:
             ack_ip = '0.0.0.0'
 
