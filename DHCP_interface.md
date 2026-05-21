@@ -148,9 +148,13 @@ IP generation: convert start/end to integers via `struct.unpack('!I', socket.ine
 
 ---
 
-### 4.2 `_select_ip(cls) -> str`
+### 4.2 `_select_ip(cls, mac: str, xid: int) -> str`
 
-`popleft()` from `_ip_pool`. Returns `None` if pool is empty.
+Select an IP by rotating through `_ip_pool` to find the next offerable address rather than simply removing the leftmost entry with `popleft()`.
+
+When an address is selected, record the pending offer in `_offered` using the selected IP as the key and `(mac, xid, timestamp)` as the value so the server can track which client/transaction the offer was made to.
+
+Returns the selected IP, or `None` if no IP can be offered (for example, if the pool is empty).
 
 ---
 
