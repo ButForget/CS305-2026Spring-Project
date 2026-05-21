@@ -69,7 +69,9 @@ class Firewall:
         try:
             with open(rule_file, 'r') as f:
                 data = json.load(f)
-                for item in data:
+                # handle both {"rules": [...]} dict format and [...] list format
+                items = data.get("rules", []) if isinstance(data, dict) else data
+                for item in items:
                     rules.append(FirewallRule(
                         src_ip=item.get("src_ip"),
                         dst_ip=item.get("dst_ip"),
