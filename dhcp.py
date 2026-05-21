@@ -32,6 +32,7 @@ class DHCPServer():
     _ip_pool = None
     _leases = {}
     _mac_bindings = {}
+    _offered = {}
     _pool_initialized = False
 
     @classmethod
@@ -46,9 +47,15 @@ class DHCPServer():
         cls._pool_initialized = True
 
     @classmethod
-    def _select_ip(cls):
-        if cls._ip_pool and len(cls._ip_pool) > 0:
-            return cls._ip_pool.popleft()
+    def _select_ip(cls, mac, xid):
+        if not cls._ip_pool:
+            return None
+        for _ in range(len(cls._ip_pool)):
+            ip = cls._ip_pool[0]
+            cls._ip_pool.rotate(-1)
+            if ip not in cls._leases and ip not in cls._offered:
+                cls._offered[ip] = (mac, xid, time.time())
+                return ip
         return None
 
     @classmethod
@@ -80,9 +87,19 @@ class DHCPServer():
             cls._release_ip(ip)
 
     @classmethod
+    def _expire_offers(cls):
+        now = time.time()
+        timeout = 30
+        expired = [ip for ip, (_, _, ts) in cls._offered.items()
+                   if ts + timeout < now]
+        for ip in expired:
+            del cls._offered[ip]
+
+    @classmethod
     def handle_dhcp(cls, datapath, port, pkt):
         cls._init_pool()
         cls._expire_leases()
+        cls._expire_offers()
 
         dhcp_objs = pkt.get_protocols(dhcp.dhcp)
         if not dhcp_objs:
@@ -93,10 +110,11 @@ class DHCPServer():
                          if opt.tag == dhcp.DHCP_MESSAGE_TYPE_OPT]
         if not msg_type_opts:
             return
-        msg_type = ord(msg_type_opts[0].value)
+        val = msg_type_opts[0].value
+        msg_type = val[0] if isinstance(val, bytes) else ord(val)
 
         if msg_type == dhcp.DHCP_DISCOVER:
-            offered_ip = cls._select_ip()
+            offered_ip = cls._select_ip(dhcp_obj.chaddr, dhcp_obj.xid)
             if offered_ip:
                 offer = cls.assemble_offer(pkt, datapath, offered_ip)
                 cls._send_packet(datapath, port, offer)
@@ -112,6 +130,12 @@ class DHCPServer():
                     return
                 requested_ip = dhcp_obj.ciaddr
             if cls._is_ip_available(requested_ip, client_mac):
+                if requested_ip in cls._offered:
+                    del cls._offered[requested_ip]
+                try:
+                    cls._ip_pool.remove(requested_ip)
+                except ValueError:
+                    pass
                 cls._leases[requested_ip] = {
                     'mac': client_mac,
                     'start_time': time.time(),
@@ -124,7 +148,7 @@ class DHCPServer():
                 nak = cls.assemble_nak(pkt, datapath)
                 cls._send_packet(datapath, port, nak)
 
-        elif msg_type == 7:
+        elif msg_type == dhcp.DHCP_RELEASE:
             client_mac = dhcp_obj.chaddr
             if client_mac in cls._mac_bindings:
                 cls._release_ip(cls._mac_bindings[client_mac])
@@ -235,7 +259,7 @@ class DHCPServer():
         option_list = []
         option_list.append(dhcp.option(tag=dhcp.DHCP_MESSAGE_TYPE_OPT,
                                         value=b'\x06'))
-        option_list.append(dhcp.option(tag=56,
+        option_list.append(dhcp.option(tag=dhcp.DHCP_MESSAGE_OPT,
                                         value=b'Requested address not available'))
         options = dhcp.options(option_list=option_list)
 
