@@ -156,8 +156,12 @@ class DHCPServer():
                     cls._send_packet(datapath, port, nak)
                     return
                 if requested_ip in cls._offered:
-                    mac = cls._offered[requested_ip][0]
-                    cls._mac_offers.pop(mac, None)
+                    offered_mac = cls._offered[requested_ip][0]
+                    if offered_mac != client_mac:
+                        nak = cls.assemble_nak(pkt, datapath)
+                        cls._send_packet(datapath, port, nak)
+                        return
+                    cls._mac_offers.pop(client_mac, None)
                     del cls._offered[requested_ip]
                 try:
                     cls._ip_pool.remove(requested_ip)
