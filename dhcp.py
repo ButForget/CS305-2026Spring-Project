@@ -34,6 +34,7 @@ class DHCPServer():
     _leases = {}
     _mac_bindings = {}
     _offered = {}
+    _mac_offers = {}
     _pool_initialized = False
 
     @classmethod
@@ -54,10 +55,15 @@ class DHCPServer():
     def _select_ip(cls, mac, xid):
         if not cls._ip_pool:
             return None
+        if mac in cls._mac_offers:
+            ip = cls._mac_offers[mac]
+            cls._offered[ip] = (mac, xid, time.time())
+            return ip
         for _ in range(len(cls._ip_pool)):
             ip = cls._ip_pool[0]
             cls._ip_pool.rotate(-1)
             if ip not in cls._leases and ip not in cls._offered:
+                cls._mac_offers[mac] = ip
                 cls._offered[ip] = (mac, xid, time.time())
                 return ip
         return None
@@ -106,6 +112,8 @@ class DHCPServer():
         expired = [ip for ip, (_, _, ts) in cls._offered.items()
                    if ts + timeout < now]
         for ip in expired:
+            mac = cls._offered[ip][0]
+            cls._mac_offers.pop(mac, None)
             del cls._offered[ip]
 
     @classmethod
@@ -148,6 +156,8 @@ class DHCPServer():
                     cls._send_packet(datapath, port, nak)
                     return
                 if requested_ip in cls._offered:
+                    mac = cls._offered[requested_ip][0]
+                    cls._mac_offers.pop(mac, None)
                     del cls._offered[requested_ip]
                 try:
                     cls._ip_pool.remove(requested_ip)
