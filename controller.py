@@ -113,7 +113,43 @@ class ControllerApp(app_manager.OSKenApp):
         port = ev.port
         dpid = port.dpid
         self.logger.info(f"Port modified: s{dpid}:{port.port_no}")
+
+        if port.is_down():
+            self.logger.info(
+                f"Port down detected: s{dpid}:{port.port_no}, cleaning up related links and hosts"
+            )
+            self._remove_links_for_port(dpid, port.port_no)
+            self._remove_hosts_for_port(dpid, port.port_no)
         self.update_all_paths()
+
+    def _remove_links_for_port(self, dpid, port_no):
+        """
+        Remove all switch-to-switch links that use the given port.
+        """
+        neighbors = [
+            neighbor_dpid
+            for neighbor_dpid, neighbor_port in self.topology_graph.get(dpid, {}).items()
+            if neighbor_port == port_no
+        ]
+        for neighbor_dpid in neighbors:
+            del self.topology_graph[dpid][neighbor_dpid]
+            if dpid in self.topology_graph.get(neighbor_dpid, {}):
+                del self.topology_graph[neighbor_dpid][dpid]
+
+    def _remove_hosts_for_port(self, dpid, port_no):
+        """
+        Remove hosts attached to the given switch port.
+        """
+        hosts_to_remove = [
+            mac
+            for mac, (host_dpid, host_port, _) in self.hosts.items()
+            if host_dpid == dpid and host_port == port_no
+        ]
+        for mac in hosts_to_remove:
+            ip = self.hosts[mac][2]
+            if ip in self.arp_table and self.arp_table[ip] == mac:
+                del self.arp_table[ip]
+            del self.hosts[mac]
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
@@ -248,6 +284,15 @@ class ControllerApp(app_manager.OSKenApp):
         """
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+        try:
+            dpid = datapath.id
+        except Exception:
+            dpid = getattr(datapath, 'id', 'unknown')
+        # Log flow install attempt for debugging
+        try:
+            self.logger.info(f"Installing flow on s{dpid}: priority={priority} match={match} actions={actions} idle={idle_timeout} hard={hard_timeout}")
+        except Exception:
+            self.logger.info(f"Installing flow on s{dpid}: priority={priority} idle={idle_timeout} hard={hard_timeout}")
         mod = parser.OFPFlowMod(
             datapath=datapath,
             match=match,
@@ -281,17 +326,22 @@ class ControllerApp(app_manager.OSKenApp):
         # First clear old forwarding rules on all switches
         for dpid, dp in self.datapaths.items():
             self.delete_flows(dp)
+            # Reinstall table-miss so PacketIn still reaches controller.
+            self.install_table_miss(dp)
+        self.logger.info(f"Recomputing paths for hosts: {list(self.hosts.keys())}")
 
         # For each host pair, calculate and install path
         for src_mac, (src_dpid, src_port, src_ip) in self.hosts.items():
             for dst_mac, (dst_dpid, dst_port, dst_ip) in self.hosts.items():
                 if src_mac == dst_mac:
                     continue
+                self.logger.info(f"Compute path: {src_mac} (s{src_dpid}) -> {dst_mac} (s{dst_dpid})")
                 if src_dpid == dst_dpid:
                     # Source and destination are on the same switch, direct forwarding
                     self.install_single_switch_path(src_dpid, dst_mac, dst_port)
                 else:
                     path = self.get_path(src_dpid, dst_dpid)
+                    self.logger.info(f"Path found for s{src_dpid} -> s{dst_dpid}: {path}")
                     if path and len(path) >= 2:
                         self.install_path(path, dst_mac, dst_port)
 
@@ -305,6 +355,7 @@ class ControllerApp(app_manager.OSKenApp):
         parser = dp.ofproto_parser
         match = parser.OFPMatch(dl_dst=dst_mac)
         actions = [parser.OFPActionOutput(dst_port)]
+        self.logger.info(f"Install single-switch flow s{dpid} -> out:{dst_port} for dst_mac={dst_mac}")
         self.add_flow(dp, 1, match, actions)
 
     def install_path(self, path, dst_mac, dst_port):
@@ -331,6 +382,7 @@ class ControllerApp(app_manager.OSKenApp):
 
             match = parser.OFPMatch(dl_dst=dst_mac)
             actions = [parser.OFPActionOutput(out_port)]
+            self.logger.info(f"Install path flow on s{dpid}: out={out_port} dst_mac={dst_mac}")
             self.add_flow(dp, 1, match, actions)
 
     def dijkstra(self, src_dpid):
