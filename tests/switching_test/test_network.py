@@ -27,75 +27,102 @@ def do_arp_all(net):
     for h in net.hosts:
         send_arp(h)
 
-class TriangleTopo(Topo):
+class MeshTopo(Topo):
     def __init__(self, **opts):
         Topo.__init__(self, **opts)
-        h1 = self.addHost('h1')
-        h2 = self.addHost('h2')
-        h3 = self.addHost('h3')
+        # Four switches in a ring with a diagonal for alternate paths
         s1 = self.addSwitch('s1')
         s2 = self.addSwitch('s2')
         s3 = self.addSwitch('s3')
+        s4 = self.addSwitch('s4')
+
+        h1 = self.addHost('h1')
+        h2 = self.addHost('h2')
+        h3 = self.addHost('h3')
+        h4 = self.addHost('h4')
+
         self.addLink(h1, s1)
         self.addLink(h2, s2)
         self.addLink(h3, s3)
+        self.addLink(h4, s4)
+
         self.addLink(s1, s2)
         self.addLink(s2, s3)
-        self.addLink(s3, s1)
+        self.addLink(s3, s4)
+        self.addLink(s4, s1)
+        self.addLink(s1, s3)
+
+
+def ping_all_pairs(hosts, count=2, timeout=1):
+    results = {}
+    for i, src in enumerate(hosts):
+        for dst in hosts[i + 1:]:
+            out = ping(src, dst.IP(), count=count, timeout=timeout)
+            results[(src.name, dst.name)] = out
+    return results
+
+
+def print_ping_results(results, title):
+    print("\n========== %s ==========" % title)
+    for (src, dst), out in results.items():
+        print("%s -> %s: %s" % (src, dst, out.strip()))
 
 
 def run_tests(net):
     import time
-    h1, h2, h3 = net.get('h1'), net.get('h2'), net.get('h3')
+    h1, h2, h3, h4 = net.get('h1'), net.get('h2'), net.get('h3'), net.get('h4')
+    hosts = [h1, h2, h3, h4]
 
     print("\n========== Waiting for topology discovery ==========")
     time.sleep(3)
     do_arp_all(net)
-    time.sleep(10)
+    time.sleep(4)
 
-    print("\n========== Test 1: basic connectivity ==========")
-    print(ping(h1, h2.IP()))
-    print(ping(h1, h3.IP()))
-    print(ping(h2, h3.IP()))
+    print_ping_results(ping_all_pairs(hosts), "Test 1: full-mesh connectivity")
 
     print("\n========== Test 2: dump flows ==========")
     for s in net.switches:
         print(f"\n--- {s.name} ---")
         print(s.cmd('ovs-ofctl dump-flows %s --no-stats' % s.name))
 
-    print("\n========== Test 3: bring down s1-s2 ==========")
+    print("\n========== Test 3: bring down s1-s2 (expect alternate path) ==========")
     net.configLinkStatus('s1', 's2', 'down')
     time.sleep(3)
-    print("h1 -> h2:", ping(h1, h2.IP()))
-    print("h1 -> h3:", ping(h1, h3.IP()))
+    print_ping_results(ping_all_pairs(hosts), "Connectivity after s1-s2 down")
 
     print("\n========== Test 4: dump flows after link down ==========")
     for s in net.switches:
         print(f"\n--- {s.name} ---")
         print(s.cmd('ovs-ofctl dump-flows %s --no-stats' % s.name))
 
-    print("\n========== Test 5: restore link ==========")
+    print("\n========== Test 5: bring down s1-s3 (remove diagonal) ==========")
+    net.configLinkStatus('s1', 's3', 'down')
+    time.sleep(3)
+    print_ping_results(ping_all_pairs(hosts), "Connectivity with diagonal down")
+
+    print("\n========== Test 6: restore s1-s2 ==========")
     net.configLinkStatus('s1', 's2', 'up')
     time.sleep(3)
-    print("h1 -> h2:", ping(h1, h2.IP()))
+    print_ping_results(ping_all_pairs(hosts), "Connectivity after s1-s2 up")
 
-    print("\n========== Test 6: double link failure ==========")
+    print("\n========== Test 7: partition the network ==========")
     net.configLinkStatus('s1', 's2', 'down')
-    net.configLinkStatus('s2', 's3', 'down')
+    net.configLinkStatus('s3', 's4', 'down')
+    net.configLinkStatus('s1', 's3', 'down')
     time.sleep(3)
-    print("h1 -> h2 (should fail):", ping(h1, h2.IP()))
-    print("h1 -> h3 (should pass):", ping(h1, h3.IP()))
+    print_ping_results(ping_all_pairs(hosts), "Connectivity after partition")
 
     # restore
     net.configLinkStatus('s1', 's2', 'up')
-    net.configLinkStatus('s2', 's3', 'up')
+    net.configLinkStatus('s3', 's4', 'up')
+    net.configLinkStatus('s1', 's3', 'up')
     time.sleep(3)
 
     print("\n========== All tests complete ==========")
 
 def run_mininet():
     import time
-    topo = TriangleTopo()
+    topo = MeshTopo()
     net = Mininet(topo=topo, autoSetMacs=True, controller=RemoteController)
     for h in net.hosts:
         disable_ipv6(h)
