@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from mininet.cli import CLI
 from mininet.link import TCLink
 from mininet.log import setLogLevel
@@ -43,6 +44,55 @@ class TriangleTopo(Topo):
         self.addLink(s3, s1)
 
 
+def run_tests(net):
+    import time
+    h1, h2, h3 = net.get('h1'), net.get('h2'), net.get('h3')
+
+    print("\n========== Waiting for topology discovery ==========")
+    time.sleep(3)
+    do_arp_all(net)
+    time.sleep(10)
+
+    print("\n========== Test 1: basic connectivity ==========")
+    print(ping(h1, h2.IP()))
+    print(ping(h1, h3.IP()))
+    print(ping(h2, h3.IP()))
+
+    print("\n========== Test 2: dump flows ==========")
+    for s in net.switches:
+        print(f"\n--- {s.name} ---")
+        print(s.cmd('ovs-ofctl dump-flows %s --no-stats' % s.name))
+
+    print("\n========== Test 3: bring down s1-s2 ==========")
+    net.configLinkStatus('s1', 's2', 'down')
+    time.sleep(3)
+    print("h1 -> h2:", ping(h1, h2.IP()))
+    print("h1 -> h3:", ping(h1, h3.IP()))
+
+    print("\n========== Test 4: dump flows after link down ==========")
+    for s in net.switches:
+        print(f"\n--- {s.name} ---")
+        print(s.cmd('ovs-ofctl dump-flows %s --no-stats' % s.name))
+
+    print("\n========== Test 5: restore link ==========")
+    net.configLinkStatus('s1', 's2', 'up')
+    time.sleep(3)
+    print("h1 -> h2:", ping(h1, h2.IP()))
+
+    print("\n========== Test 6: double link failure ==========")
+    net.configLinkStatus('s1', 's2', 'down')
+    net.configLinkStatus('s2', 's3', 'down')
+    time.sleep(3)
+    print("h1 -> h2 (should fail):", ping(h1, h2.IP()))
+    print("h1 -> h3 (should pass):", ping(h1, h3.IP()))
+
+    # restore
+    net.configLinkStatus('s1', 's2', 'up')
+    net.configLinkStatus('s2', 's3', 'up')
+    time.sleep(3)
+
+    print("\n========== All tests complete ==========")
+
 def run_mininet():
     import time
     topo = TriangleTopo()
@@ -55,8 +105,12 @@ def run_mininet():
     net.start()
     time.sleep(1)
     do_arp_all(net)
-    CLI(net)
 
+    # automatic tests
+    run_tests(net)
+
+    # then enter CLI for manual tests
+    CLI(net)
     net.stop()
 
 if __name__ == '__main__':
