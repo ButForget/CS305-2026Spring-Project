@@ -31,6 +31,8 @@ class ControllerApp(app_manager.OSKenApp):
         self.hosts = {}  # {mac: (dpid, port_no, ip)}
         self.datapaths = {}  # {dpid: datapath}
         self.arp_table = {}  # {ip: mac}
+        #self.path_algo = "dijkstra"
+        self.path_algo = "floyd-warshall"
 
     @set_ev_cls(event.EventSwitchEnter)
     def handle_switch_add(self, ev):
@@ -197,16 +199,16 @@ class ControllerApp(app_manager.OSKenApp):
                 src_dpid = datapath.id
 
                 if src_dpid == dst_dpid:
-                    self.send_packet_out(datapath, dst_port, pkt)
+                    self.send_packet_out(datapath, dst_port, pkt, buffer_id=msg.buffer_id)
                 else:
                     path = self.get_path(src_dpid, dst_dpid)
                     if path and len(path) >= 2:
                         next_dpid = path[1]
                         out_port = self.topology_graph[src_dpid][next_dpid]
-                        self.send_packet_out(datapath, out_port, pkt)
                         # Install flows so subsequent packets are forwarded in hardware
                         self.install_path(path, dst_mac, dst_port)
-            else:
+                        self.send_packet_out(datapath, out_port, pkt, buffer_id=msg.buffer_id)
+            else: # todo: can be deleted according the readme
                     # Destination unknown, flood
                 self.flood_packet(datapath, in_port, pkt)
 
@@ -311,20 +313,30 @@ class ControllerApp(app_manager.OSKenApp):
         )
         datapath.send_msg(out)
 
-    def send_packet_out(self, datapath, out_port, pkt):
+    def send_packet_out(self, datapath, out_port, pkt, buffer_id=None):
         """
         Send packet out from the specified port
         """
         ofproto = datapath.ofproto
         pkt.serialize()
         actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
-        out = datapath.ofproto_parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=ofproto.OFP_NO_BUFFER,
-            in_port=ofproto.OFPP_NONE,
-            actions=actions,
-            data=pkt.data
-        )
+        if buffer_id is None:
+            buffer_id = ofproto.OFP_NO_BUFFER
+        if buffer_id == ofproto.OFP_NO_BUFFER:
+            out = datapath.ofproto_parser.OFPPacketOut(
+                datapath=datapath,
+                buffer_id=buffer_id,
+                in_port=ofproto.OFPP_NONE,
+                actions=actions,
+                data=pkt.data
+            )
+        else:
+            out = datapath.ofproto_parser.OFPPacketOut(
+                datapath=datapath,
+                buffer_id=buffer_id,
+                in_port=ofproto.OFPP_NONE,
+                actions=actions
+            )
         datapath.send_msg(out)
 
     def install_table_miss(self, datapath):
@@ -382,12 +394,19 @@ class ControllerApp(app_manager.OSKenApp):
         """
         Recalculate the shortest path between all host pairs and install flow entries.
         """
-        # # First clear old forwarding rules on all switches
-        # for dpid, dp in self.datapaths.items():
-        #     self.delete_flows(dp)
-        #     # Reinstall table-miss so PacketIn still reaches controller.
-        #     self.install_table_miss(dp)
-        # self.logger.info(f"Recomputing paths for hosts: {list(self.hosts.keys())}")
+        if self.path_algo == "floyd-warshall":
+            # Only delete priority=1 path rules, keep table-miss rules intact.
+            for dpid, dp in self.datapaths.items():
+                ofproto = dp.ofproto
+                parser = dp.ofproto_parser
+                mod = parser.OFPFlowMod(
+                    datapath=dp,
+                    command=ofproto.OFPFC_DELETE_STRICT,
+                    priority=1,
+                    match=parser.OFPMatch()
+                )
+                dp.send_msg(mod)
+            self.logger.info(f"Recomputing paths for hosts: {list(self.hosts.keys())}")
 
         # For each host pair, calculate and install path
         for src_mac, (src_dpid, src_port, src_ip) in self.hosts.items():
@@ -398,11 +417,13 @@ class ControllerApp(app_manager.OSKenApp):
                 if src_dpid == dst_dpid:
                     # Source and destination are on the same switch, direct forwarding
                     self.install_single_switch_path(src_dpid, dst_mac, dst_port)
+                    self._log_host_path(src_mac, dst_mac, [src_dpid])
                 else:
                     path = self.get_path(src_dpid, dst_dpid)
                     self.logger.info(f"Path found for s{src_dpid} -> s{dst_dpid}: {path}")
                     if path and len(path) >= 2:
                         self.install_path(path, dst_mac, dst_port)
+                        self._log_host_path(src_mac, dst_mac, path)
 
     def install_single_switch_path(self, dpid, dst_mac, dst_port):
         """
@@ -479,9 +500,123 @@ class ControllerApp(app_manager.OSKenApp):
             paths[dst] = path
         return paths
 
+    def bellman_ford(self, src_dpid):
+        """
+        Calculate the shortest path from src_dpid to all other switches (all weights = 1)
+        Return: {dst_dpid: [src_dpid, ..., dst_dpid]}
+        """
+        nodes = set(self.topology_graph.keys())
+        for u, neighbors in self.topology_graph.items():
+            nodes.update(neighbors.keys())
+
+        dist = {node: float('inf') for node in nodes}
+        prev = {node: None for node in nodes}
+        dist[src_dpid] = 0
+
+        edges = []
+        for u, neighbors in self.topology_graph.items():
+            for v in neighbors:
+                edges.append((u, v))
+
+        for _ in range(max(len(nodes) - 1, 0)):
+            updated = False
+            for u, v in edges:
+                if dist[u] + 1 < dist[v]:
+                    dist[v] = dist[u] + 1
+                    prev[v] = u
+                    updated = True
+            if not updated:
+                break
+
+        paths = {}
+        for dst, d in dist.items():
+            if d == float('inf'):
+                continue
+            path = []
+            node = dst
+            while node is not None:
+                path.append(node)
+                node = prev[node]
+            path.reverse()
+            paths[dst] = path
+        return paths
+
+    def floyd_warshall(self, src_dpid):
+        """
+        Calculate the shortest path from src_dpid to all other switches (all weights = 1)
+        Return: {dst_dpid: [src_dpid, ..., dst_dpid]}
+        """
+        nodes = set(self.topology_graph.keys())
+        for u, neighbors in self.topology_graph.items():
+            nodes.update(neighbors.keys())
+        if src_dpid not in nodes:
+            return {}
+
+        dist = {u: {v: float('inf') for v in nodes} for u in nodes}
+        nxt = {u: {v: None for v in nodes} for u in nodes}
+        for u in nodes:
+            dist[u][u] = 0
+            nxt[u][u] = u
+
+        for u, neighbors in self.topology_graph.items():
+            for v in neighbors:
+                dist[u][v] = 1
+                nxt[u][v] = v
+
+        for k in nodes:
+            for i in nodes:
+                if dist[i][k] == float('inf'):
+                    continue
+                for j in nodes:
+                    alt = dist[i][k] + dist[k][j]
+                    if alt < dist[i][j]:
+                        dist[i][j] = alt
+                        nxt[i][j] = nxt[i][k]
+
+        paths = {}
+        for dst in nodes:
+            if nxt[src_dpid][dst] is None:
+                continue
+            path = [src_dpid]
+            cur = src_dpid
+            while cur != dst:
+                cur = nxt[cur][dst]
+                if cur is None:
+                    path = []
+                    break
+                path.append(cur)
+            if path:
+                paths[dst] = path
+        return paths
+
     def get_path(self, src_dpid, dst_dpid):
         """Get the shortest path between two switches"""
         if src_dpid == dst_dpid:
             return [src_dpid]
-        paths = self.dijkstra(src_dpid)
+        if self.path_algo == "bellman-ford":
+            paths = self.bellman_ford(src_dpid)
+        elif self.path_algo == "floyd-warshall":
+            paths = self.floyd_warshall(src_dpid)
+        else:
+            paths = self.dijkstra(src_dpid)
         return paths.get(dst_dpid, [])
+
+    def _format_host(self, mac):
+        info = self.hosts.get(mac)
+        if not info:
+            return mac
+        _, _, ip = info
+        if ip:
+            return f"{ip}({mac})"
+        return mac
+
+    def _log_host_path(self, src_mac, dst_mac, path):
+        if not path:
+            return
+        src_label = self._format_host(src_mac)
+        dst_label = self._format_host(dst_mac)
+        path_str = "->".join([f"s{dpid}" for dpid in path])
+        hop_count = max(len(path) - 1, 0)
+        self.logger.info(
+            f"Shortest path {src_label} -> {dst_label}: {path_str}, length={hop_count}"
+        )
