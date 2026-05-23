@@ -31,6 +31,8 @@ class ControllerApp(app_manager.OSKenApp):
         self.hosts = {}  # {mac: (dpid, port_no, ip)}
         self.datapaths = {}  # {dpid: datapath}
         self.arp_table = {}  # {ip: mac}
+        self.switch_ports = defaultdict(set)  # {dpid: set of port_no}
+        self.inter_switch_ports = defaultdict(set)  # {dpid: set of port_no that connect to other switches}
 
     @set_ev_cls(event.EventSwitchEnter)
     def handle_switch_add(self, ev):
@@ -41,9 +43,12 @@ class ControllerApp(app_manager.OSKenApp):
         self.datapaths[dp.id] = dp
         if dp.id not in self.topology_graph:
             self.topology_graph[dp.id] = {}
+        # Record all ports on this switch
+        for port in ev.switch.ports:
+            self.switch_ports[dp.id].add(port.port_no)
         # Install table-miss rule: unmatched packets are sent to the controller
         self.install_table_miss(dp)
-        self.logger.info(f"Switch {dp.id} has entered the network.")
+        self.logger.info(f"Switch {dp.id} has entered the network. Ports: {self.switch_ports[dp.id]}")
 
     @set_ev_cls(event.EventSwitchLeave)
     def handle_switch_delete(self, ev):
@@ -58,6 +63,11 @@ class ControllerApp(app_manager.OSKenApp):
         for other_dpid in list(self.topology_graph.keys()):
             if dp.id in self.topology_graph[other_dpid]:
                 del self.topology_graph[other_dpid][dp.id]
+        # Clean up port tracking
+        if dp.id in self.switch_ports:
+            del self.switch_ports[dp.id]
+        if dp.id in self.inter_switch_ports:
+            del self.inter_switch_ports[dp.id]
         # Remove hosts connected to this switch
         hosts_to_remove = [mac for mac, (dpid, _, _) in self.hosts.items() if dpid == dp.id]
         for mac in hosts_to_remove:
@@ -71,11 +81,12 @@ class ControllerApp(app_manager.OSKenApp):
         Event handler indicating a host has joined the network.
         """
         host = ev.host
-        # host.ipv4 is a list, take the first IP
         ip = host.ipv4[0] if host.ipv4 else None
         self.hosts[host.mac] = (host.port.dpid, host.port.port_no, ip)
         if ip:
             self.arp_table[ip] = host.mac
+        # Make sure the host port is recorded
+        self.switch_ports[host.port.dpid].add(host.port.port_no)
         self.logger.info(f"Host {host.mac} (IP={ip}) added at s{host.port.dpid}:{host.port.port_no}")
         self.update_all_paths()
 
@@ -84,10 +95,16 @@ class ControllerApp(app_manager.OSKenApp):
         """
         Event handler indicating a link between two switches has been added.
         """
-        src = ev.link.src  # src.dpid, src.port_no
-        dst = ev.link.dst  # dst.dpid, dst.port_no
+        src = ev.link.src
+        dst = ev.link.dst
         self.topology_graph[src.dpid][dst.dpid] = src.port_no
         self.topology_graph[dst.dpid][src.dpid] = dst.port_no
+        # Mark these ports as inter-switch ports
+        self.inter_switch_ports[src.dpid].add(src.port_no)
+        self.inter_switch_ports[dst.dpid].add(dst.port_no)
+        # Also make sure they're in switch_ports
+        self.switch_ports[src.dpid].add(src.port_no)
+        self.switch_ports[dst.dpid].add(dst.port_no)
         self.logger.info(f"Link added: s{src.dpid}:{src.port_no} <-> s{dst.dpid}:{dst.port_no}")
         self.update_all_paths()
 
@@ -102,6 +119,9 @@ class ControllerApp(app_manager.OSKenApp):
             del self.topology_graph[src.dpid][dst.dpid]
         if src.dpid in self.topology_graph.get(dst.dpid, {}):
             del self.topology_graph[dst.dpid][src.dpid]
+        # Remove from inter-switch ports
+        self.inter_switch_ports[src.dpid].discard(src.port_no)
+        self.inter_switch_ports[dst.dpid].discard(dst.port_no)
         self.logger.info(f"Link deleted: s{src.dpid}:{src.port_no} <-> s{dst.dpid}:{dst.port_no}")
         self.update_all_paths()
 
@@ -135,6 +155,8 @@ class ControllerApp(app_manager.OSKenApp):
             del self.topology_graph[dpid][neighbor_dpid]
             if dpid in self.topology_graph.get(neighbor_dpid, {}):
                 del self.topology_graph[neighbor_dpid][dpid]
+        # Remove from inter-switch ports
+        self.inter_switch_ports[dpid].discard(port_no)
 
     def _remove_hosts_for_port(self, dpid, port_no):
         """
@@ -153,9 +175,6 @@ class ControllerApp(app_manager.OSKenApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
-        """
-        Handle PacketIn message: ARP proxy reply + DHCP relay
-        """
         try:
             msg = ev.msg
             datapath = msg.datapath
@@ -167,20 +186,39 @@ class ControllerApp(app_manager.OSKenApp):
                 DHCPServer.handle_dhcp(datapath, in_port, pkt)
                 return
 
-            # Handle ARP packet
             pkt_arp = pkt.get_protocol(arp.arp)
             if pkt_arp:
                 self.handle_arp(datapath, in_port, pkt, pkt_arp)
                 return
 
+            # 兜底：对于其他包（ICMP等），尝试按已知路径转发，否则 flood
+            eth = pkt.get_protocol(ethernet.ethernet)
+            if eth:
+                dst_mac = eth.dst
+                if dst_mac in self.hosts:
+                    dst_dpid, dst_port, _ = self.hosts[dst_mac]
+                    src_dpid = datapath.id
+                    if src_dpid == dst_dpid:
+                        self.send_packet_out(datapath, dst_port, msg.data)
+                    else:
+                        path = self.get_path(src_dpid, dst_dpid)
+                        if path and len(path) >= 2:
+                            next_dpid = path[1]
+                            out_port = self.topology_graph[src_dpid][next_dpid]
+                            self.send_packet_out(datapath, out_port, msg.data)
+                        else:
+                            self.flood_packet(datapath, in_port, msg.data)
+                else:
+                    self.flood_packet(datapath, in_port, msg.data)
+
         except Exception as e:
-            self.logger.error(f"PacketIn handler error: {e}")
+            import traceback
+            self.logger.error(f"PacketIn handler error: {e}\n{traceback.format_exc()}")
 
     def handle_arp(self, datapath, in_port, pkt, pkt_arp):
         """
         Handle ARP request: If the target IP's MAC is known, reply on behalf; otherwise, flood.
         """
-        # Learn sender's IP-MAC mapping
         src_ip = pkt_arp.src_ip
         src_mac = pkt_arp.src_mac
         self.arp_table[src_ip] = src_mac
@@ -188,29 +226,27 @@ class ControllerApp(app_manager.OSKenApp):
         if pkt_arp.opcode == arp.ARP_REQUEST:
             dst_ip = pkt_arp.dst_ip
             if dst_ip in self.arp_table:
-                # Proxy ARP Reply
                 dst_mac = self.arp_table[dst_ip]
                 self.send_arp_reply(datapath, in_port, dst_mac, dst_ip, src_mac, src_ip)
                 self.logger.info(f"ARP proxy reply: {dst_ip} is at {dst_mac}")
             else:
-                # Unknown target MAC, flood ARP request
-                self.flood_packet(datapath, in_port, pkt)
+                self.flood_packet(datapath, in_port, pkt.data)
                 self.logger.info(f"ARP request for {dst_ip} flooded (unknown target)")
         elif pkt_arp.opcode == arp.ARP_REPLY:
-            # ARP Reply is directly forwarded to the target host
             dst_mac = pkt_arp.dst_mac
             if dst_mac in self.hosts:
                 dst_dpid, dst_port, _ = self.hosts[dst_mac]
                 if dst_dpid in self.datapaths:
                     dp = self.datapaths[dst_dpid]
-                    self.send_packet_out(dp, dst_port, pkt)
+                    self.send_packet_out(dp, dst_port, pkt.data)
+        else:
+            self.flood_packet(datapath, in_port, pkt.data)
 
     def send_arp_reply(self, datapath, out_port, src_mac, src_ip, dst_mac, dst_ip):
         """
         Construct and send ARP Reply packet
         """
         ofproto = datapath.ofproto
-        # 构造 ARP Reply 包
         pkt_reply = packet.Packet()
         pkt_reply.add_protocol(ethernet.ethernet(
             ethertype=ether_types.ETH_TYPE_ARP,
@@ -236,35 +272,45 @@ class ControllerApp(app_manager.OSKenApp):
         )
         datapath.send_msg(out)
 
-    def flood_packet(self, datapath, in_port, pkt):
+    def flood_packet(self, datapath, in_port, data):
         """
-        Flood the packet out of all ports (except the input port)
+        Flood only to host-facing ports on all switches, avoiding loops.
+        data: raw packet bytes (already serialized)
         """
-        ofproto = datapath.ofproto
-        pkt.serialize()
-        actions = [datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)]
-        out = datapath.ofproto_parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=ofproto.OFP_NO_BUFFER,
-            in_port=in_port,
-            actions=actions,
-            data=pkt.data
-        )
-        datapath.send_msg(out)
+        for dpid, dp in self.datapaths.items():
+            ofproto = dp.ofproto
+            parser = dp.ofproto_parser
+            # Get host-facing ports = all ports minus inter-switch ports
+            all_ports = self.switch_ports.get(dpid, set())
+            isw_ports = self.inter_switch_ports.get(dpid, set())
+            host_ports = all_ports - isw_ports
+            for port_no in host_ports:
+                # Skip the original ingress port
+                if dpid == datapath.id and port_no == in_port:
+                    continue
+                actions = [parser.OFPActionOutput(port_no)]
+                out = parser.OFPPacketOut(
+                    datapath=dp,
+                    buffer_id=ofproto.OFP_NO_BUFFER,
+                    in_port=ofproto.OFPP_NONE,
+                    actions=actions,
+                    data=data
+                )
+                dp.send_msg(out)
 
-    def send_packet_out(self, datapath, out_port, pkt):
+    def send_packet_out(self, datapath, out_port, data):
         """
-        Send packet out from the specified port
+        Send packet out from the specified port.
+        data: raw packet bytes
         """
         ofproto = datapath.ofproto
-        pkt.serialize()
         actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
         out = datapath.ofproto_parser.OFPPacketOut(
             datapath=datapath,
             buffer_id=ofproto.OFP_NO_BUFFER,
             in_port=ofproto.OFPP_NONE,
             actions=actions,
-            data=pkt.data
+            data=data
         )
         datapath.send_msg(out)
 
@@ -274,8 +320,8 @@ class ControllerApp(app_manager.OSKenApp):
         """
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        match = parser.OFPMatch()  # Match all packets
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER)]
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, 0xffff)]
         self.add_flow(datapath, 0, match, actions)
 
     def add_flow(self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0):
@@ -284,15 +330,8 @@ class ControllerApp(app_manager.OSKenApp):
         """
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        try:
-            dpid = datapath.id
-        except Exception:
-            dpid = getattr(datapath, 'id', 'unknown')
-        # Log flow install attempt for debugging
-        try:
-            self.logger.info(f"Installing flow on s{dpid}: priority={priority} match={match} actions={actions} idle={idle_timeout} hard={hard_timeout}")
-        except Exception:
-            self.logger.info(f"Installing flow on s{dpid}: priority={priority} idle={idle_timeout} hard={hard_timeout}")
+        dpid = getattr(datapath, 'id', 'unknown')
+        self.logger.info(f"Installing flow on s{dpid}: priority={priority} actions={actions} idle={idle_timeout} hard={hard_timeout}")
         mod = parser.OFPFlowMod(
             datapath=datapath,
             match=match,
@@ -306,7 +345,7 @@ class ControllerApp(app_manager.OSKenApp):
 
     def delete_flows(self, datapath):
         """
-        Delete all non-table-miss flow entries on the switch
+        Delete all flow entries on the switch (table-miss will be reinstalled after).
         """
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -315,7 +354,6 @@ class ControllerApp(app_manager.OSKenApp):
             match=parser.OFPMatch(),
             command=ofproto.OFPFC_DELETE,
             out_port=ofproto.OFPP_NONE,
-            priority=1
         )
         datapath.send_msg(mod)
 
@@ -323,25 +361,19 @@ class ControllerApp(app_manager.OSKenApp):
         """
         Recalculate the shortest path between all host pairs and install flow entries.
         """
-        # First clear old forwarding rules on all switches
         for dpid, dp in self.datapaths.items():
             self.delete_flows(dp)
-            # Reinstall table-miss so PacketIn still reaches controller.
             self.install_table_miss(dp)
         self.logger.info(f"Recomputing paths for hosts: {list(self.hosts.keys())}")
 
-        # For each host pair, calculate and install path
         for src_mac, (src_dpid, src_port, src_ip) in self.hosts.items():
             for dst_mac, (dst_dpid, dst_port, dst_ip) in self.hosts.items():
                 if src_mac == dst_mac:
                     continue
-                self.logger.info(f"Compute path: {src_mac} (s{src_dpid}) -> {dst_mac} (s{dst_dpid})")
                 if src_dpid == dst_dpid:
-                    # Source and destination are on the same switch, direct forwarding
                     self.install_single_switch_path(src_dpid, dst_mac, dst_port)
                 else:
                     path = self.get_path(src_dpid, dst_dpid)
-                    self.logger.info(f"Path found for s{src_dpid} -> s{dst_dpid}: {path}")
                     if path and len(path) >= 2:
                         self.install_path(path, dst_mac, dst_port)
 
@@ -355,15 +387,11 @@ class ControllerApp(app_manager.OSKenApp):
         parser = dp.ofproto_parser
         match = parser.OFPMatch(dl_dst=dst_mac)
         actions = [parser.OFPActionOutput(dst_port)]
-        self.logger.info(f"Install single-switch flow s{dpid} -> out:{dst_port} for dst_mac={dst_mac}")
         self.add_flow(dp, 1, match, actions)
 
     def install_path(self, path, dst_mac, dst_port):
         """
         Install flow entries along the path.
-        path: [src_dpid, ..., dst_dpid] list of switch dpids
-        dst_mac: destination host's MAC address
-        dst_port: port number where the destination host connects on the last switch
         """
         for i in range(len(path)):
             dpid = path[i]
@@ -373,22 +401,18 @@ class ControllerApp(app_manager.OSKenApp):
             parser = dp.ofproto_parser
 
             if i < len(path) - 1:
-                # Intermediate or first switch: forward out the port to the next hop
                 next_dpid = path[i + 1]
                 out_port = self.topology_graph[dpid][next_dpid]
             else:
-                # Last switch: forward out the port to the destination host
                 out_port = dst_port
 
             match = parser.OFPMatch(dl_dst=dst_mac)
             actions = [parser.OFPActionOutput(out_port)]
-            self.logger.info(f"Install path flow on s{dpid}: out={out_port} dst_mac={dst_mac}")
             self.add_flow(dp, 1, match, actions)
 
     def dijkstra(self, src_dpid):
         """
         Calculate the shortest path from src_dpid to all other switches (all weights = 1)
-        Return: {dst_dpid: [src_dpid, ..., dst_dpid]}
         """
         dist = {src_dpid: 0}
         prev = {src_dpid: None}
@@ -408,7 +432,6 @@ class ControllerApp(app_manager.OSKenApp):
                         prev[v] = u
                         heapq.heappush(heap, (new_dist, v))
 
-        # Backtrack path
         paths = {}
         for dst in dist:
             path = []
