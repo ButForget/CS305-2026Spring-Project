@@ -13,6 +13,7 @@ from os_ken.lib.packet import ipv4
 from os_ken.lib.packet import packet
 from os_ken.lib.packet import udp
 from dhcp import DHCPServer
+from arp_utils import ARPHandler
 from collections import defaultdict
 import time
 from ofctl_utilis import OfCtl, OfCtl_v1_0, OfCtl_after_v1_2, VLANID_NONE
@@ -31,6 +32,14 @@ class ControllerApp(app_manager.OSKenApp):
         self.hosts = {}  # {mac: (dpid, port_no, ip)}
         self.datapaths = {}  # {dpid: datapath}
         self.arp_table = {}  # {ip: mac}
+        self.arp_handler = ARPHandler(
+            logger=self.logger,
+            arp_table=self.arp_table,
+            hosts=self.hosts,
+            datapaths=self.datapaths,
+            send_packet_out=self.send_packet_out,
+            flood_packet=self.flood_packet
+        )
         self.switch_ports = defaultdict(set)  # {dpid: set of port_no}
         self.inter_switch_ports = defaultdict(set)  # {dpid: set of port_no that connect to other switches}
 
@@ -188,7 +197,7 @@ class ControllerApp(app_manager.OSKenApp):
 
             pkt_arp = pkt.get_protocol(arp.arp)
             if pkt_arp:
-                self.handle_arp(datapath, in_port, pkt, pkt_arp)
+                self.arp_handler.handle_arp(datapath, in_port, pkt, pkt_arp)
                 return
 
             # 兜底：对于其他包（ICMP等），尝试按已知路径转发，否则 flood
@@ -214,63 +223,6 @@ class ControllerApp(app_manager.OSKenApp):
         except Exception as e:
             import traceback
             self.logger.error(f"PacketIn handler error: {e}\n{traceback.format_exc()}")
-
-    def handle_arp(self, datapath, in_port, pkt, pkt_arp):
-        """
-        Handle ARP request: If the target IP's MAC is known, reply on behalf; otherwise, flood.
-        """
-        src_ip = pkt_arp.src_ip
-        src_mac = pkt_arp.src_mac
-        self.arp_table[src_ip] = src_mac
-
-        if pkt_arp.opcode == arp.ARP_REQUEST:
-            dst_ip = pkt_arp.dst_ip
-            if dst_ip in self.arp_table:
-                dst_mac = self.arp_table[dst_ip]
-                self.send_arp_reply(datapath, in_port, dst_mac, dst_ip, src_mac, src_ip)
-                self.logger.info(f"ARP proxy reply: {dst_ip} is at {dst_mac}")
-            else:
-                self.flood_packet(datapath, in_port, pkt.data)
-                self.logger.info(f"ARP request for {dst_ip} flooded (unknown target)")
-        elif pkt_arp.opcode == arp.ARP_REPLY:
-            dst_mac = pkt_arp.dst_mac
-            if dst_mac in self.hosts:
-                dst_dpid, dst_port, _ = self.hosts[dst_mac]
-                if dst_dpid in self.datapaths:
-                    dp = self.datapaths[dst_dpid]
-                    self.send_packet_out(dp, dst_port, pkt.data)
-        else:
-            self.flood_packet(datapath, in_port, pkt.data)
-
-    def send_arp_reply(self, datapath, out_port, src_mac, src_ip, dst_mac, dst_ip):
-        """
-        Construct and send ARP Reply packet
-        """
-        ofproto = datapath.ofproto
-        pkt_reply = packet.Packet()
-        pkt_reply.add_protocol(ethernet.ethernet(
-            ethertype=ether_types.ETH_TYPE_ARP,
-            dst=dst_mac,
-            src=src_mac
-        ))
-        pkt_reply.add_protocol(arp.arp(
-            opcode=arp.ARP_REPLY,
-            src_mac=src_mac,
-            src_ip=src_ip,
-            dst_mac=dst_mac,
-            dst_ip=dst_ip
-        ))
-        pkt_reply.serialize()
-
-        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
-        out = datapath.ofproto_parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=ofproto.OFP_NO_BUFFER,
-            in_port=ofproto.OFPP_NONE,
-            actions=actions,
-            data=pkt_reply.data
-        )
-        datapath.send_msg(out)
 
     def flood_packet(self, datapath, in_port, data):
         """
