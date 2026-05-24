@@ -171,6 +171,10 @@ class DHCPServer():
                 except ValueError:
                     pass
                 cls._ip_pool_set.discard(requested_ip)
+                if client_mac in cls._mac_bindings:
+                    old_ip = cls._mac_bindings[client_mac]
+                    if old_ip != requested_ip:
+                        cls._release_ip(old_ip)
                 cls._leases[requested_ip] = {
                     'mac': client_mac,
                     'start_time': time.time(),
