@@ -169,6 +169,15 @@ Called when:
 - A DHCP RELEASE (type 7) is received.
 - `_expire_leases()` finds a stale lease.
 
+> **Known testing limitation:** `test_dhcp_release` currently cannot fully verify
+> that a released IP is actually re-issued.  The pool uses FIFO ordering
+> (`append` to tail, scan from head) with 99 addresses but only 2 test hosts,
+> so released IPs (at the tail) are never reached before unused IPs (at the
+> head).  Combined with `RemoteController` (server runs in a separate process,
+> preventing direct inspection of `_ip_pool_set`), there is no test-side-only
+> fix short of exhausting all ~99 pool addresses.  A future resolution could
+> expose pool state via the controller or shrink the test pool size.
+
 ---
 
 ### 4.4 `_is_ip_available(cls, ip: str, mac: str) -> bool` *(bonus)*
