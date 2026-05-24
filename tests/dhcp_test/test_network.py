@@ -15,7 +15,7 @@ def ping(host, dst, count=1, timeout=1):
     return host.cmd('ping -c %s -W %s %s' % (count, timeout, dst))
 
 def send_arp(node, count=1):
-    node.cmd('arping -c %s -A -I %s-eth0 %s' % (count, node.name, node.IP()))
+    node.cmd('arping -c %s -A -I %s-eth0 %s' % (count, node.name, node.defaultIntf().updateIP() or node.IP()))
 
 def send_dhcp(node):
     print('Sending DHCP request dhclient -v %s-eth0 '% (node.name))
