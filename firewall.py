@@ -129,6 +129,12 @@ class Firewall:
                     continue
                 self.installed.add(rule_key)
 
+                # For ICMP: block only Echo Requests (type=8), not Echo Replies (type=0).
+                # This allows bidirectional ping to work: h1->h2 ping is blocked,
+                # but h2->h1 ping succeeds because the Echo Reply (src=h1) is allowed.
+                if proto_num == inet.IPPROTO_ICMP and src_port == 0:
+                    src_port = 8  # ICMP type 8 = Echo Request
+
                 # TODO: use ofctl.set_flow() to install a high-priority drop flow
                 ofctl.set_flow(
                     cookie=self.COOKIE,
