@@ -31,8 +31,8 @@ class ControllerApp(app_manager.OSKenApp):
         self.hosts = {}  # {mac: (dpid, port_no, ip)}
         self.datapaths = {}  # {dpid: datapath}
         self.arp_table = {}  # {ip: mac}
-        #self.path_algo = "dijkstra"
-        self.path_algo = "floyd-warshall"
+        self.path_algo = "dijkstra"
+        # self.path_algo = "floyd-warshall"
         self.ofctls = {}
         self.firewall = Firewall()
 
