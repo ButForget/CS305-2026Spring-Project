@@ -32,8 +32,10 @@ class Firewall:
     }
 
     def __init__(self, rule_file="firewall_rules.json"):
-        self.rule_file = rule_file
-        self.rules = self._load_rules(rule_file)
+        # Ensure we always find the rules file relative to this script
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.rule_file = os.path.join(base_dir, rule_file)
+        self.rules = self._load_rules(self.rule_file)
         self.installed = set()
 
     # Some helper functions that may be useful
@@ -84,6 +86,14 @@ class Firewall:
             print(f"Error: Failed to load firewall rules from {rule_file}\n")     
 
         return rules
+
+    def clear_installed_rules_for_switch(self, dpid):
+        """
+        Clear the installed rules cache for a specific switch.
+        """
+        to_remove = [key for key in self.installed if key[0] == dpid]
+        for key in to_remove:
+            self.installed.remove(key)
 
     def install_rules(self, ofctls):
         """

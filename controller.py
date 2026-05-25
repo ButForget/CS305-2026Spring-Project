@@ -69,6 +69,7 @@ class ControllerApp(app_manager.OSKenApp):
             del self.datapaths[dp.id]
         if dp.id in self.ofctls:
             del self.ofctls[dp.id]
+            self.firewall.clear_installed_rules_for_switch(dp.id)
         if dp.id in self.topology_graph:
             del self.topology_graph[dp.id]
         for other_dpid in list(self.topology_graph.keys()):
