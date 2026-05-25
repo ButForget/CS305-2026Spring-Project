@@ -78,7 +78,7 @@ def tcp_reachable(host, target_ip, port, connect_timeout=2, max_time=3):
     )
     result = host.cmd(cmd).strip()
     # Any numeric HTTP status code means TCP connected
-    if result.isdigit():
+    if result.isdigit() and result != "000":
         return True
     return False
 
