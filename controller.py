@@ -33,6 +33,8 @@ class ControllerApp(app_manager.OSKenApp):
         self.arp_table = {}  # {ip: mac}
         #self.path_algo = "dijkstra"
         self.path_algo = "floyd-warshall"
+        self.ofctls = {}
+        self.firewall = Firewall()
 
     @set_ev_cls(event.EventSwitchEnter)
     def handle_switch_add(self, ev):
@@ -43,6 +45,16 @@ class ControllerApp(app_manager.OSKenApp):
         self.datapaths[dp.id] = dp
         if dp.id not in self.topology_graph:
             self.topology_graph[dp.id] = {}
+            
+        version = dp.ofproto.OFP_VERSION
+        if version == ofproto_v1_0.OFP_VERSION:
+            self.ofctls[dp.id] = OfCtl_v1_0(dp, self.logger)
+        else:
+            self.ofctls[dp.id] = OfCtl_after_v1_2(dp, self.logger)
+            
+        # Install firewall rules
+        self.firewall.install_rules(self.ofctls)
+        
         # Install table-miss rule: unmatched packets are sent to the controller
         self.install_table_miss(dp)
         self.logger.info(f"Switch {dp.id} has entered the network.")
@@ -55,6 +67,8 @@ class ControllerApp(app_manager.OSKenApp):
         dp = ev.switch.dp
         if dp.id in self.datapaths:
             del self.datapaths[dp.id]
+        if dp.id in self.ofctls:
+            del self.ofctls[dp.id]
         if dp.id in self.topology_graph:
             del self.topology_graph[dp.id]
         for other_dpid in list(self.topology_graph.keys()):
