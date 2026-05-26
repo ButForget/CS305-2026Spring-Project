@@ -32,8 +32,10 @@ class Firewall:
     }
 
     def __init__(self, rule_file="firewall_rules.json"):
-        self.rule_file = rule_file
-        self.rules = self._load_rules(rule_file)
+        # Ensure we always find the rules file relative to this script
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.rule_file = os.path.join(base_dir, rule_file)
+        self.rules = self._load_rules(self.rule_file)
         self.installed = set()
 
     # Some helper functions that may be useful
@@ -66,12 +68,32 @@ class Firewall:
         """
         rules = []
 
-        # TODO: read rule_file
-        # TODO: parse JSON rules
-        # TODO: create FirewallRule objects
-        # TODO: append them into rules
+        try:
+            with open(rule_file, 'r') as f:
+                data = json.load(f)
+                # handle both {"rules": [...]} dict format and [...] list format
+                items = data.get("rules", []) if isinstance(data, dict) else data
+                for item in items:
+                    rules.append(FirewallRule(
+                        src_ip=item.get("src_ip"),
+                        dst_ip=item.get("dst_ip"),
+                        proto=item.get("proto"),
+                        src_port=item.get("src_port"),
+                        dst_port=item.get("dst_port"),
+                        action=item.get("action", "deny")
+                    ))
+        except (FileNotFoundError, json.JSONDecodeError):
+            print(f"Error: Failed to load firewall rules from {rule_file}\n")     
 
         return rules
+
+    def clear_installed_rules_for_switch(self, dpid):
+        """
+        Clear the installed rules cache for a specific switch.
+        """
+        to_remove = [key for key in self.installed if key[0] == dpid]
+        for key in to_remove:
+            self.installed.remove(key)
 
     def install_rules(self, ofctls):
         """
@@ -81,15 +103,47 @@ class Firewall:
             for rule in self.rules:
 
                 # TODO: only handle deny rules
+                if rule.action != "deny":
+                    continue
 
                 # TODO: convert protocol name to protocol number
+                proto_num = self._proto_to_number(rule.proto)
 
                 # TODO: normalize source and destination ports
+                src_port = self._normalize_port(rule.src_port)
+                dst_port = self._normalize_port(rule.dst_port)
+
+                # normalize IPs as well
+                src_ip = self._normalize_any(rule.src_ip)
+                dst_ip = self._normalize_any(rule.dst_ip)
 
                 # TODO: skip invalid port rules
+                if (src_port or dst_port) and not proto_num:
+                    continue
+                if (src_port or dst_port) and proto_num not in (inet.IPPROTO_TCP, inet.IPPROTO_UDP):
+                    continue
 
                 # TODO: avoid duplicated flow installation
+                rule_key = (dpid, src_ip, dst_ip, proto_num, src_port, dst_port)
+                if rule_key in self.installed:
+                    continue
+                self.installed.add(rule_key)
+
+                # For ICMP: block only Echo Requests (type=8), not Echo Replies (type=0).
+                # This allows bidirectional ping to work: h1->h2 ping is blocked,
+                # but h2->h1 ping succeeds because the Echo Reply (src=h1) is allowed.
+                if proto_num == inet.IPPROTO_ICMP and src_port == 0:
+                    src_port = 8  # ICMP type 8 = Echo Request
 
                 # TODO: use ofctl.set_flow() to install a high-priority drop flow
-
-                pass
+                ofctl.set_flow(
+                    cookie=self.COOKIE,
+                    priority=self.PRIORITY,
+                    dl_type=ether.ETH_TYPE_IP,
+                    nw_src=src_ip if src_ip else 0,
+                    nw_dst=dst_ip if dst_ip else 0,
+                    nw_proto=proto_num,
+                    tp_src=src_port,
+                    tp_dst=dst_port,
+                    actions=[]
+                )

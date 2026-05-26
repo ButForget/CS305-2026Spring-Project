@@ -417,7 +417,8 @@ class OfCtl_after_v1_2(OfCtl):
 
     def set_flow(self, cookie, priority, dl_type=0, dl_dst=0, dl_vlan=0,
                  nw_src=0, src_mask=32, nw_dst=0, dst_mask=32,
-                 nw_proto=0, idle_timeout=0, actions=None):
+                 nw_proto=0, idle_timeout=0, actions=None,
+                 tp_src=0, tp_dst=0):
         ofp = self.dp.ofproto
         ofp_parser = self.dp.ofproto_parser
         cmd = ofp.OFPFC_ADD
@@ -441,6 +442,18 @@ class OfCtl_after_v1_2(OfCtl):
                 match.set_ip_proto(nw_proto)
             elif dl_type == ether.ETH_TYPE_ARP:
                 match.set_arp_opcode(nw_proto)
+
+        if tp_src:
+            if nw_proto == inet.IPPROTO_TCP:
+                match.set_tcp_src(tp_src)
+            elif nw_proto == inet.IPPROTO_UDP:
+                match.set_udp_src(tp_src)
+        
+        if tp_dst:
+            if nw_proto == inet.IPPROTO_TCP:
+                match.set_tcp_dst(tp_dst)
+            elif nw_proto == inet.IPPROTO_UDP:
+                match.set_udp_dst(tp_dst)
 
         # Instructions
         actions = actions or []
