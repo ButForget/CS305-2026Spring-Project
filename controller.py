@@ -13,6 +13,8 @@ from os_ken.lib.packet import ipv4
 from os_ken.lib.packet import packet
 from os_ken.lib.packet import udp
 from dhcp import DHCPServer
+from dns_server import DNSServer
+from nat import NAT
 from collections import defaultdict
 import time
 from ofctl_utilis import OfCtl, OfCtl_v1_0, OfCtl_after_v1_2, VLANID_NONE
@@ -35,6 +37,12 @@ class ControllerApp(app_manager.OSKenApp):
         # self.path_algo = "floyd-warshall"
         self.ofctls = {}
         self.firewall = Firewall()
+        self.controller_mac = '7e:49:b3:f0:f9:99'
+        self.dns_server_ip = DNSServer.server_ip
+        self.nat_external_ip = NAT.NAT_EXTERNAL_IP
+        # Register static DNS entry for DHCP server
+        DNSServer.register_host("dhcp.local", self.dns_server_ip)
+        DNSServer.register_host("dns.local", self.dns_server_ip)
 
     @set_ev_cls(event.EventSwitchEnter)
     def handle_switch_add(self, ev):
@@ -199,6 +207,14 @@ class ControllerApp(app_manager.OSKenApp):
                 self.handle_arp(datapath, in_port, pkt, pkt_arp)
                 return
 
+            # --- DNS handling ---
+            pkt_udp = pkt.get_protocol(udp.udp)
+            if pkt_udp and pkt_udp.dst_port == 53:
+                dns_response = DNSServer.handle_dns(datapath, in_port, pkt, msg.data)
+                if dns_response:
+                    self._send_raw_packet(datapath, in_port, dns_response)
+                return
+
             # Reactive forwarding for non-ARP packets
             src_mac = eth.src
             dst_mac = eth.dst
@@ -207,6 +223,16 @@ class ControllerApp(app_manager.OSKenApp):
             pkt_ipv4 = pkt.get_protocol(ipv4.ipv4)
             if pkt_ipv4:
                 self._learn_host_from_packet(datapath.id, in_port, src_mac, pkt_ipv4.src)
+
+            # --- NAT handling ---
+            if pkt_ipv4 and NAT.needs_nat(pkt_ipv4.src, pkt_ipv4.dst):
+                nat_port, nat_data = NAT.handle_nat(
+                    datapath, in_port, pkt, self.hosts, self.arp_table,
+                    self.controller_mac
+                )
+                if nat_data:
+                    self._send_raw_packet(datapath, nat_port, nat_data)
+                    return
 
             # Forward to destination if location is known
             if dst_mac in self.hosts:
@@ -248,6 +274,10 @@ class ControllerApp(app_manager.OSKenApp):
         self.hosts[mac] = (dpid, port, ip)
         if ip:
             self.arp_table[ip] = mac
+            # Register with DNS (hostname derived from MAC)
+            hostname = self._mac_to_hostname(mac)
+            DNSServer.register_host("%s.local" % hostname, ip)
+            DNSServer.register_host(hostname, ip)
         self.logger.info(f"Learned host from packet: {mac} (IP={ip}) at s{dpid}:{port}")
         self.update_all_paths()
         
@@ -255,6 +285,7 @@ class ControllerApp(app_manager.OSKenApp):
     def handle_arp(self, datapath, in_port, pkt, pkt_arp):
         """
         Handle ARP request: If the target IP's MAC is known, reply on behalf; otherwise, flood.
+        Also proxies ARP for DNS server IP and NAT external IP.
         """
         # Learn sender's IP-MAC mapping
         src_ip = pkt_arp.src_ip
@@ -263,6 +294,34 @@ class ControllerApp(app_manager.OSKenApp):
 
         if pkt_arp.opcode == arp.ARP_REQUEST:
             dst_ip = pkt_arp.dst_ip
+
+            # Proxy ARP for DNS server IP (192.168.1.1)
+            if dst_ip == self.dns_server_ip:
+                self.send_arp_reply(datapath, in_port, self.controller_mac,
+                                    dst_ip, src_mac, src_ip)
+                self.logger.info(f"ARP proxy reply (DNS): {dst_ip} -> {self.controller_mac}")
+                return
+
+            # Proxy ARP for NAT external IP (10.0.2.100)
+            if dst_ip == self.nat_external_ip:
+                self.send_arp_reply(datapath, in_port, self.controller_mac,
+                                    dst_ip, src_mac, src_ip)
+                self.logger.info(f"ARP proxy reply (NAT): {dst_ip} -> {self.controller_mac}")
+                return
+
+            # Proxy ARP for cross-subnet NAT communication
+            if NAT.is_internal(src_ip) and NAT.is_external(dst_ip):
+                self.send_arp_reply(datapath, in_port, self.controller_mac,
+                                    dst_ip, src_mac, src_ip)
+                self.logger.info(f"ARP proxy reply (NAT cross-subnet): {dst_ip} -> {self.controller_mac}")
+                return
+
+            if NAT.is_external(src_ip) and NAT.is_internal(dst_ip):
+                self.send_arp_reply(datapath, in_port, self.controller_mac,
+                                    dst_ip, src_mac, src_ip)
+                self.logger.info(f"ARP proxy reply (NAT cross-subnet): {dst_ip} -> {self.controller_mac}")
+                return
+
             if dst_ip in self.arp_table:
                 # Proxy ARP Reply
                 dst_mac = self.arp_table[dst_ip]
@@ -387,21 +446,6 @@ class ControllerApp(app_manager.OSKenApp):
             hard_timeout=hard_timeout,
             priority=priority,
             actions=actions
-        )
-        datapath.send_msg(mod)
-
-    def delete_flows(self, datapath):
-        """
-        Delete all non-table-miss flow entries on the switch
-        """
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        mod = parser.OFPFlowMod(
-            datapath=datapath,
-            match=parser.OFPMatch(),
-            command=ofproto.OFPFC_DELETE,
-            out_port=ofproto.OFPP_NONE,
-            priority=1
         )
         datapath.send_msg(mod)
 
@@ -624,6 +668,30 @@ class ControllerApp(app_manager.OSKenApp):
         if ip:
             return f"{ip}({mac})"
         return mac
+
+    @staticmethod
+    def _mac_to_hostname(mac):
+        """Derive hostname from MAC address (e.g., 00:00:00:00:00:02 -> h2)."""
+        try:
+            parts = mac.split(':')
+            last_byte = int(parts[-1], 16)
+            return "h%d" % last_byte
+        except (ValueError, IndexError):
+            return mac.replace(':', '')[-6:]
+
+    def _send_raw_packet(self, datapath, out_port, raw_data):
+        """Send a raw bytes packet out via PacketOut (matching send_arp_reply)."""
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        actions = [parser.OFPActionOutput(out_port)]
+        out = parser.OFPPacketOut(
+            datapath=datapath,
+            buffer_id=ofproto.OFP_NO_BUFFER,
+            in_port=ofproto.OFPP_NONE,
+            actions=actions,
+            data=raw_data
+        )
+        datapath.send_msg(out)
 
     def _log_host_path(self, src_mac, dst_mac, path):
         if not path:
