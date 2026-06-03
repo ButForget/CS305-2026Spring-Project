@@ -1,0 +1,1109 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, shapes.geometric}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{fancyhdr}
+\usepackage{tocloft}
+\usepackage{titlesec}
+\usepackage{verbatim}
+
+% Code listing style
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codegreen}{RGB}{0,128,0}
+\definecolor{codegray}{RGB}{128,128,128}
+\definecolor{codepurple}{RGB}{128,0,128}
+\definecolor{codeblue}{RGB}{0,0,180}
+
+\lstdefinestyle{pythonstyle}{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    captionpos=b,
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue}\bfseries,
+    stringstyle=\color{codepurple},
+    numberstyle=\tiny\color{codegray},
+    numbers=left,
+    numbersep=5pt,
+    frame=single,
+    rulecolor=\color{black!30},
+    showstringspaces=false,
+    tabsize=4,
+    language=Python
+}
+
+\lstdefinestyle{textstyle}{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{black!30},
+    showstringspaces=false,
+}
+
+\lstset{style=pythonstyle}
+
+% Header/Footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{SDN Controller Project}
+\lhead{\leftmark}
+\rfoot{Page \thepage}
+
+% Title formatting
+\titleformat{\section}{\Large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\large\bfseries}{}{0em}{}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    urlcolor=blue!70!black,
+    citecolor=blue!70!black
+}
+
+
+
+% ============================================================
+% TITLE PAGE
+% ============================================================
+% 1. ?????????????????????????
+\begin{document}
+\begin{center}
+{\Large\bfseries SDN Controller Project Documentation}
+
+\vspace{0.2cm}
+\end{center}
+
+
+% % ============================================================
+% % TABLE OF CONTENTS
+% % ============================================================
+% \tableofcontents
+% \newpage
+
+% ============================================================
+% 1. OVERALL ARCHITECTURE
+% ============================================================
+\section{Overall Architecture}
+
+This project implements a fully-featured Software-Defined Networking (SDN) controller built upon the \textbf{os-ken} framework (the community-maintained successor to Ryu) and the \textbf{OpenFlow 1.0} protocol. The controller serves as the centralised intelligence of the network, making all forwarding, addressing, naming, translation, and security decisions on behalf of the data-plane switches.
+
+The system follows the canonical three-tier SDN architecture:
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    layer/.style={draw, rounded corners, minimum width=12cm, minimum height=1.6cm, align=center, font=\large},
+    arr/.style={-{Stealth[length=3mm]}, thick}
+]
+\node[layer, fill=blue!15] (app) at (0, 4) {\textbf{Application Layer}\\Switching / DHCP / Firewall / DNS / NAT};
+\node[layer, fill=green!15] (ctrl) at (0, 2) {\textbf{Control Layer}\\os-ken Controller Framework (OpenFlow 1.0)};
+\node[layer, fill=orange!15] (infra) at (0, 0) {\textbf{Infrastructure Layer}\\OpenFlow Switches (Mininet / Open vSwitch)};
+
+\draw[arr, <->] (app.south) -- (ctrl.north) node[midway, right, font=\small] {Internal API};
+\draw[arr, <->] (ctrl.south) -- (infra.north) node[midway, right, font=\small] {OpenFlow Channel};
+\end{tikzpicture}
+\caption{Three-tier SDN Architecture}
+\end{figure}
+
+The \textbf{Infrastructure Layer} consists of OpenFlow-enabled switches (realised via Open vSwitch within Mininet) that forward packets strictly according to their flow tables. These switches have no autonomous forwarding logic; they rely entirely on the controller for decision-making.
+
+The \textbf{Control Layer} is the os-ken framework itself, which manages the OpenFlow connections to each switch, dispatches events (such as PacketIn, topology changes, and port status updates), and provides the programming interface for flow table manipulation.
+
+The \textbf{Application Layer} hosts five cooperating modules that together implement the full network functionality. When a switch encounters a packet that matches no flow entry, it forwards the packet to the controller via a \texttt{PacketIn} message. The controller's packet processing pipeline inspects the packet, determines the appropriate action (DHCP reply, ARP proxy response, DNS answer, NAT rewriting, or shortest-path forwarding), and either sends a direct \texttt{PacketOut} reply or installs proactive flow entries via \texttt{FlowMod} messages so that subsequent packets of the same flow are handled entirely in the data plane without controller involvement.
+
+% ============================================================
+% 2. PROJECT OVERVIEW
+% ============================================================
+\section{Project Overview}
+
+This project delivers a comprehensive SDN solution that goes beyond basic L2 switching to provide a complete network services stack. The five major functionalities are summarised below:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Module} & \textbf{Description} \\
+\midrule
+Shortest-Path Switching & Discovers the network topology via LLDP-based link detection, computes shortest paths using graph algorithms (Dijkstra, Bellman-Ford, Floyd-Warshall), and installs forwarding flow entries along the computed paths. Supports link failover and automatic path recomputation. \\
+\addlinespace
+DHCP & Allocates IP addresses from a configurable pool (192.168.1.2--192.168.1.100), handling the full DISCOVER/OFFER/REQUEST/ACK lifecycle with lease management, duplicate prevention, and stale offer expiration. \\
+\addlinespace
+Firewall & Loads deny rules from an external JSON configuration file, normalises CIDR notation and protocol identifiers, and installs high-priority drop flows (priority 60000) to block matching traffic before it reaches forwarding rules. \\
+\addlinespace
+DNS & Provides lightweight name resolution within the SDN, automatically registering host names upon discovery and responding to A and PTR queries via raw PacketOut. \\
+\addlinespace
+NAT & Performs SNAT/DNAT between internal (10.0.1.0/24) and external (10.0.2.0/24) subnets, with full connection tracking, ephemeral port allocation, and header rewriting for ICMP, TCP, and UDP. \\
+\bottomrule
+\end{tabular}
+\caption{Module Summary}
+\end{table}
+
+The controller is designed to be modular: each service (DHCP, DNS, Firewall, NAT) is implemented in its own Python module and integrated into the main controller's \texttt{PacketIn} pipeline. This separation of concerns allows individual modules to be developed, tested, and debugged independently while still cooperating seamlessly at runtime.
+
+% ============================================================
+% 3. STRUCTURE OVERVIEW
+% ============================================================
+\section{Structure Overview}
+
+\subsection{Packet Processing Pipeline}
+
+When a packet arrives at the controller, it traverses a carefully ordered processing pipeline. Each stage inspects the packet and either handles it (returning early) or passes it to the next stage. This design ensures that higher-priority services (such as DHCP and ARP) are processed first, while general forwarding acts as the final catch-all.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node distance=1.0cm,
+    block/.style={draw, rounded corners, minimum width=5.5cm, minimum height=0.9cm, align=center, font=\small\bfseries},
+    arr/.style={-{Stealth[length=2.5mm]}, thick}
+]
+\node[block, fill=red!10] (a) {PacketIn Received};
+\node[block, fill=yellow!15, below=of a] (b) {DHCP Handler};
+\node[block, fill=gray!10, below=of b] (b2) {LLDP Filter (drop)};
+\node[block, fill=cyan!10, below=of b2] (c) {ARP Proxy};
+\node[block, fill=purple!10, below=of c] (d) {DNS Handler};
+\node[block, fill=green!10, below=of d] (e) {Host Learning};
+\node[block, fill=orange!10, below=of e] (f) {NAT Handler};
+\node[block, fill=blue!10, below=of f] (g) {Shortest-Path Forwarding};
+
+\draw[arr] (a) -- (b);
+\draw[arr] (b) -- (b2) node[midway, right, font=\scriptsize\itshape] {not DHCP};
+\draw[arr] (b2) -- (c) node[midway, right, font=\scriptsize\itshape] {not LLDP};
+\draw[arr] (c) -- (d) node[midway, right, font=\scriptsize\itshape] {not ARP};
+\draw[arr] (d) -- (e) node[midway, right, font=\scriptsize\itshape] {not DNS};
+\draw[arr] (e) -- (f);
+\draw[arr] (f) -- (g) node[midway, right, font=\scriptsize\itshape] {not NAT};
+\end{tikzpicture}
+\caption{Packet Processing Pipeline --- each stage returns early when it handles the packet}
+\end{figure}
+
+\subsection{Module Responsibilities}
+
+The controller consists of five cooperating modules, each with clearly defined responsibilities:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{ControllerApp} (\texttt{controller.py}) --- The main application class that handles topology events (switch join/leave, link add/delete, port modifications), the \texttt{PacketIn} processing pipeline, host learning, ARP proxy, shortest-path computation, and flow table management. It orchestrates the other modules by invoking them at appropriate points in the pipeline.
+    \item \textbf{DHCPServer} (\texttt{dhcp.py}) --- Implements a complete DHCP server that allocates IP addresses from a configurable pool, manages lease lifetimes, handles the four-message handshake (DISCOVER/OFFER/REQUEST/ACK), and releases addresses upon client departure or lease expiration.
+    \item \textbf{Firewall} (\texttt{firewall.py}) --- Loads security policy rules from an external JSON file, normalises CIDR addresses and protocol identifiers, and proactively installs high-priority drop flows on every switch to block prohibited traffic before it is ever forwarded.
+    \item \textbf{DNSServer} (\texttt{dns\_server.py}) --- Provides in-controller DNS resolution for learned hosts. It maintains bidirectional hostname-to-IP mappings, answers A record and PTR record queries, and returns appropriate error codes (NXDOMAIN, SERVFAIL) for unknown or unsupported queries.
+    \item \textbf{NAT} (\texttt{nat.py}) --- Performs Network Address Translation between internal and external subnets. It rewrites IP and transport headers, manages a connection tracking table with ephemeral port allocation, and handles both SNAT (outbound) and DNAT (inbound) directions for ICMP, TCP, and UDP.
+\end{itemize}
+
+\subsection{Project File Tree}
+
+\begin{lstlisting}[style=textstyle]
+project/
+|-- controller.py            # Controller app: topology + shortest-path forwarding
+|-- dhcp.py                  # DHCP server
+|-- firewall.py              # Firewall rule loading and installation
+|-- dns_server.py            # DNS server (A and PTR records)
+|-- nat.py                   # NAT module (SNAT/DNAT)
+|-- ofctl_utilis.py          # OpenFlow utility library
+|-- tests/
+|   |-- switching_test/
+|   |   +-- test_network.py  # Switching test script
+|   |-- dhcp_test/
+|   |   +-- test_network.py  # DHCP test script
+|   |-- firewall_test/
+|   |   +-- test_network.py  # Firewall test script
+|   |-- dns_test/
+|   |   |-- test_network_dns.py  # DNS interactive test
+|   |   +-- ci/
+|   |       +-- test_dns.py      # DNS CI test
+|   +-- nat_test/
+|       |-- test_network_nat.py  # NAT interactive test
+|       +-- ci/
+|           +-- test_nat.py      # NAT CI test
+|-- docs/
+|   |-- controller_zh.md
+|   |-- dhcp.md
+|   |-- firewall.md
+|   |-- dns.md
+|   +-- nat.md
+|-- README.md
++-- requirements.txt
+\end{lstlisting}
+
+% ============================================================
+% 4. CONTROLLER
+% ============================================================
+\section{Controller --- Shortest-Path Switching}
+
+\subsection{Functionality}
+
+The \texttt{ControllerApp} class is the central component of the entire SDN system. It is responsible for maintaining an accurate real-time view of the network topology and computing optimal forwarding paths between all pairs of communicating hosts. Its major responsibilities include:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{Topology Discovery and Maintenance:} The controller listens for OpenFlow events including switch feature replies (new switch registration), link addition/deletion notifications, and port status changes. These events are used to build and maintain an adjacency graph of the network in real time.
+    \item \textbf{Host Learning:} When a host first sends traffic (or is detected via topology events), the controller records its MAC address, IP address, the switch it is connected to, and the port number. This information is essential for computing end-to-end paths.
+    \item \textbf{ARP Proxy:} Rather than flooding ARP requests across the entire network, the controller intercepts ARP queries and responds directly from its ARP table when the target is known. This eliminates broadcast storms and reduces unnecessary traffic. The ARP proxy also handles special addresses such as the DNS server IP (192.168.1.1) and the NAT external IP (10.0.2.100).
+    \item \textbf{Shortest-Path Routing:} The controller implements three classical shortest-path algorithms---Dijkstra, Bellman-Ford, and Floyd-Warshall---providing flexibility and redundancy in path computation. All link weights are treated as unity (hop count metric).
+    \item \textbf{Flow Installation:} Once a shortest path is determined, the controller installs flow entries on every switch along the path so that subsequent packets of the same flow are forwarded entirely in the data plane without further controller involvement.
+    \item \textbf{Link Failover and Path Recomputation:} When a link failure is detected (via link deletion or port-down events), the controller removes all affected flow entries and recomputes paths for every active host pair, installing fresh forwarding rules along the new optimal paths.
+\end{itemize}
+
+\subsection{Key Data Structures}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lp{8.5cm}@{}}
+\toprule
+\textbf{Structure} & \textbf{Description} \\
+\midrule
+\texttt{topology\_graph} & Adjacency map of switches: \texttt{\{dpid: \{neighbor\_dpid: port\_no\}\}}. Represents the entire network graph used for path computation. \\
+\texttt{hosts} & Host registry: \texttt{\{mac: (dpid, port, ip)\}}. Maps each known host's MAC to its attachment point and IP address. \\
+\texttt{arp\_table} & ARP cache: \texttt{\{ip: mac\}}. Used by the ARP proxy to respond to queries without flooding. \\
+\texttt{datapaths} & Switch registry: \texttt{\{dpid: datapath\_object\}}. Stores references to all connected switches for flow programming. \\
+\texttt{controller\_mac} & The MAC address used by the controller itself when acting as DHCP server, DNS server, or NAT gateway. \\
+\texttt{dns\_server\_ip} & The IP address (192.168.1.1) at which the built-in DNS server is reachable. \\
+\texttt{nat\_external\_ip} & The external-facing IP address (10.0.2.100) used for NAT source translation. \\
+\bottomrule
+\end{tabular}
+\caption{Controller Key Data Structures}
+\end{table}
+
+\subsection{Key Functions}
+
+\subsubsection{Topology Event Handlers}
+
+The controller registers handlers for switch, link, and port events to maintain an up-to-date topology graph:
+
+\begin{lstlisting}[caption={Switch and Link Event Handlers}]
+# Switch join: register datapath, install table-miss + firewall rules
+self.datapaths[dp.id] = dp
+self.firewall.install_rules(self.ofctls)
+self.install_table_miss(dp)
+
+# Link add: update topology graph, recompute all paths
+self.topology_graph[src.dpid][dst.dpid] = src.port_no
+self.topology_graph[dst.dpid][src.dpid] = dst.port_no
+self.update_all_paths()
+\end{lstlisting}
+
+\subsubsection{Host Learning}
+
+\begin{lstlisting}[caption={Host Learning ¡ª DNS Registration}]
+self.hosts[mac] = (dpid, port, ip)
+if ip:
+    self.arp_table[ip] = mac
+    hostname = self._mac_to_hostname(mac)
+    DNSServer.register_host("%s.local" % hostname, ip)
+    DNSServer.register_host(hostname, ip)
+self.update_all_paths()
+\end{lstlisting}
+
+\subsubsection{Shortest-Path Algorithms}
+
+The controller uses Dijkstra's algorithm for shortest-path computation (all link weights = 1, hop count metric). Bellman-Ford and Floyd-Warshall are also implemented as alternatives.
+
+\begin{lstlisting}[caption={Dijkstra's Algorithm (heapq-based)}]
+while heap:
+    d, u = heapq.heappop(heap)
+    if u in visited: continue
+    visited.add(u)
+    for v in self.topology_graph.get(u, {}):
+        if v not in visited and d + 1 < dist.get(v, float('inf')):
+            dist[v] = d + 1; prev[v] = u
+            heapq.heappush(heap, (d + 1, v))
+# Backtrack prev pointers to reconstruct paths
+\end{lstlisting}
+
+\subsubsection{Path Installation}
+
+\begin{lstlisting}[caption={Install Flow Entries Along a Path}]
+# For each switch on path, install forwarding rule to next hop
+for i in range(len(path)):
+    dpid = path[i]
+    out_port = dst_port if i == len(path) - 1 \
+               else self.topology_graph[dpid][path[i + 1]]
+    match = parser.OFPMatch(dl_dst=dst_mac)
+    actions = [parser.OFPActionOutput(out_port)]
+    self.add_flow(dp, 1, match, actions)
+\end{lstlisting}
+
+\subsubsection{Full Path Recomputation}
+
+\begin{lstlisting}[caption={Recompute All Paths After Topology Change}]
+for src_mac, (src_dpid, _, _) in self.hosts.items():
+    for dst_mac, (dst_dpid, _, dst_port) in self.hosts.items():
+        if src_mac == dst_mac: continue
+        if src_dpid == dst_dpid:
+            self.install_single_switch_path(src_dpid, dst_mac, dst_port)
+        else:
+            path = self.get_path(src_dpid, dst_dpid)
+            if path and len(path) >= 2:
+                self.install_path(path, dst_mac, dst_port)
+\end{lstlisting}
+
+\subsubsection{ARP Proxy}
+
+\begin{lstlisting}[caption={ARP Proxy Handler}]
+# Proxy ARP for DNS server, NAT external IP, and cross-subnet destinations
+if dst_ip in (self.dns_server_ip, self.nat_external_ip) or \
+   (NAT.is_internal(src_ip) and NAT.is_external(dst_ip)):
+    self.send_arp_reply(datapath, in_port, self.controller_mac,
+                        dst_ip, src_mac, src_ip)
+    return
+# Known host ¡ª reply from cache; unknown ¡ª flood
+if dst_ip in self.arp_table:
+    self.send_arp_reply(datapath, in_port, self.arp_table[dst_ip],
+                        dst_ip, src_mac, src_ip)
+else:
+    self.flood_packet(datapath, in_port, pkt)
+\end{lstlisting}
+
+\subsection{PacketIn Pipeline Order}
+
+The complete \texttt{packet\_in\_handler} processes packets in the following strict order:
+
+\begin{enumerate}
+    \item \textbf{DHCP:} If the packet is a DHCP message (UDP port 67/68), delegate to the DHCP server module and return.
+    \item \textbf{LLDP:} If the packet is an LLDP frame, silently drop it (topology discovery is handled separately).
+    \item \textbf{ARP:} If the packet is an ARP request, attempt proxy reply from cache; return if successful.
+    \item \textbf{DNS:} If the packet is a UDP/53 query destined for the DNS server IP, delegate to the DNS module and return.
+    \item \textbf{Host Learning:} Learn the source host's MAC, IP, and attachment point from the packet.
+    \item \textbf{NAT:} If the packet crosses subnet boundaries, perform address translation and return.
+    \item \textbf{Forwarding:} Look up or compute the shortest path to the destination and forward the packet (installing flow entries for future packets).
+\end{enumerate}
+
+Each stage returns early when it fully handles the packet, ensuring that only unmatched packets cascade to subsequent stages.
+
+% ============================================================
+% 5. DHCP
+% ============================================================
+\section{DHCP}
+
+\subsection{Functionality}
+
+The DHCP module implements a fully-featured Dynamic Host Configuration Protocol server that runs entirely within the SDN controller. Rather than requiring an external DHCP server on the network, the controller intercepts all DHCP traffic at the PacketIn stage and generates appropriate responses via PacketOut, making address allocation instantaneous and eliminating the need for DHCP relay agents.
+
+The DHCP server provides the following capabilities:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{Address Pool Management:} Maintains a pool of available IP addresses (192.168.1.2 through 192.168.1.100) using a deque structure for efficient allocation and release.
+    \item \textbf{Full DHCP Lifecycle:} Handles the complete four-message handshake (DISCOVER $\rightarrow$ OFFER $\rightarrow$ REQUEST $\rightarrow$ ACK) as well as RELEASE messages for graceful address return.
+    \item \textbf{Lease Management:} Tracks active leases with timestamps and configurable lease durations (86400 seconds default). Expired leases are automatically reclaimed.
+    \item \textbf{Duplicate Prevention:} Ensures no IP address is allocated to multiple clients simultaneously through careful tracking of offers and bindings.
+    \item \textbf{Stale Offer Expiration:} Offers that are not followed by a REQUEST within 30 seconds are automatically expired and the address is returned to the pool.
+    \item \textbf{NAK Handling:} Responds with DHCPNAK when a client requests an unavailable address (e.g., one already allocated to another client).
+\end{itemize}
+
+\subsection{Key Data Structures}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Structure} & \textbf{Description} \\
+\midrule
+\texttt{\_ip\_pool} & \texttt{deque} of available IP addresses for allocation \\
+\texttt{\_leases} & \texttt{\{ip: \{mac, start\_time, lease\_time\}\}} --- active lease records \\
+\texttt{\_offered} & \texttt{\{ip: (mac, xid, timestamp)\}} --- pending offers awaiting REQUEST \\
+\texttt{\_mac\_offers} & \texttt{\{mac: ip\}} --- reverse lookup from MAC to offered IP \\
+\texttt{\_mac\_bindings} & \texttt{\{mac: ip\}} --- confirmed MAC-to-IP bindings \\
+\bottomrule
+\end{tabular}
+\caption{DHCP Data Structures}
+\end{table}
+
+\subsection{Key Functions}
+
+\begin{lstlisting}[caption={DHCP Main Dispatcher (abridged)}]
+if msg_type == DISCOVER:
+    offered_ip = cls._select_ip(client_mac, xid)
+    if offered_ip:
+        cls._send_packet(port, cls.assemble_offer(pkt, datapath, offered_ip))
+elif msg_type == REQUEST:
+    if cls._is_ip_available(requested_ip, client_mac):
+        cls._leases[requested_ip] = {'mac': client_mac, ...}
+        cls._send_packet(port, cls.assemble_ack(pkt, datapath, port))
+    else:
+        cls._send_packet(port, cls.assemble_nak(pkt, datapath))
+elif msg_type == RELEASE:
+    cls._release_ip(cls._mac_bindings[client_mac])
+\end{lstlisting}
+
+\begin{lstlisting}[caption={IP Selection with Duplicate Prevention}]
+# Reuse pending offer if exists; otherwise rotate pool to find available IP
+if mac in cls._mac_offers:
+    return cls._mac_offers[mac]
+for _ in range(len(cls._ip_pool)):
+    ip = cls._ip_pool[0]; cls._ip_pool.rotate(-1)
+    if ip not in cls._leases and ip not in cls._offered:
+        cls._mac_offers[mac] = ip
+        cls._offered[ip] = (mac, xid, time.time())
+        return ip
+return None
+\end{lstlisting}
+
+\subsection{Configuration}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Server IP & 192.168.1.1 \\
+Address Pool & 192.168.1.2 -- 192.168.1.100 (99 addresses) \\
+Subnet Mask & 255.255.255.0 \\
+Default Gateway & 192.168.1.1 \\
+Lease Time & 86400 seconds (24 hours) \\
+DNS Server & 8.8.8.8 \\
+Offer Timeout & 30 seconds \\
+\bottomrule
+\end{tabular}
+\caption{DHCP Configuration Parameters}
+\end{table}
+
+% ============================================================
+% 6. FIREWALL
+% ============================================================
+\section{Firewall}
+
+\subsection{Functionality}
+
+The Firewall module implements a proactive security policy enforcement mechanism. Unlike reactive approaches that inspect every packet at the controller, the firewall installs high-priority drop flows directly into the switches' flow tables when they join the network. This ensures that prohibited traffic is blocked at line rate in the data plane without any controller involvement, providing both security and performance.
+
+Key capabilities include:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{JSON Rule Loading:} Security policies are defined in an external \texttt{firewall\_rules.json} file, enabling easy modification without code changes. Rules specify source IP, destination IP, protocol, and port number.
+    \item \textbf{CIDR Subnet Support:} Source and destination IP fields support CIDR notation (e.g., \texttt{192.168.0.0/16}), allowing rules to match entire subnets with a single entry.
+    \item \textbf{Protocol Filtering:} Supports TCP, UDP, and ICMP filtering. ICMP blocking is implemented via matching on ICMP Echo Request (type 8) to block ping while allowing other ICMP types.
+    \item \textbf{High-Priority Installation:} Drop rules are installed at priority 60000, far above the forwarding rules (priority 1) and table-miss (priority 0), ensuring that firewall policy always takes precedence.
+    \item \textbf{Duplicate Avoidance:} The module tracks which rules have been installed on which switches, avoiding redundant flow installations when topology events trigger repeated calls.
+    \item \textbf{Dynamic Cleanup:} When a switch departs the network, all tracking information for that switch is cleared to prevent stale state.
+\end{itemize}
+
+\subsection{Flow Priority Hierarchy}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}clp{7cm}@{}}
+\toprule
+\textbf{Priority} & \textbf{Purpose} & \textbf{Description} \\
+\midrule
+60000 & Firewall drop rules & Block prohibited traffic at the highest priority \\
+1 & Forwarding rules & Shortest-path forwarding entries \\
+0 & Table-miss & Send unmatched packets to controller \\
+\bottomrule
+\end{tabular}
+\caption{Flow Table Priority Hierarchy}
+\end{table}
+
+\subsection{Key Functions}
+
+\begin{lstlisting}[caption={CIDR Parsing}]
+@staticmethod
+def _parse_cidr(value):
+    """'192.168.0.0/16' -> ('192.168.0.0', 16)."""
+    if '/' in value:
+        parts = value.split('/', 1)
+        return parts[0].strip() or None, int(parts[1])
+    return value, 32
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Flow Rule Installation (deny rules at priority 60000)}]
+ofctl.set_flow(
+    cookie=self.COOKIE, priority=self.PRIORITY,  # 60000
+    dl_type=ether.ETH_TYPE_IP,
+    nw_src=src_ip, src_mask=src_mask,
+    nw_dst=dst_ip, dst_mask=dst_mask,
+    nw_proto=proto_num, tp_src=src_port, tp_dst=dst_port,
+    actions=[]  # empty = DROP
+)
+\end{lstlisting}
+
+% ============================================================
+% 7. DNS
+% ============================================================
+\section{DNS}
+
+\subsection{Functionality}
+
+The DNS module provides a lightweight, in-controller Domain Name System server that enables hosts within the SDN to resolve hostnames without requiring an external DNS infrastructure. When the controller learns about a new host (via topology events or DHCP allocation), it automatically registers the host's name-to-IP mapping in the DNS module. Subsequent DNS queries from any host in the network are intercepted at the controller and answered directly via PacketOut.
+
+Key capabilities include:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{A Record Resolution:} Resolves hostnames (e.g., \texttt{h2.local}) to their assigned IP addresses.
+    \item \textbf{PTR Record Resolution:} Supports reverse DNS lookups, converting IP addresses back to hostnames via the \texttt{in-addr.arpa} domain.
+    \item \textbf{Automatic Registration:} Hosts are registered automatically when the controller learns their location, requiring no manual configuration.
+    \item \textbf{Error Handling:} Returns NXDOMAIN (non-existent domain) for unknown hostnames and SERVFAIL for unsupported query types.
+    \item \textbf{Raw Packet Construction:} Builds complete DNS response packets (Ethernet/IP/UDP/DNS) from scratch using raw bytes, enabling direct PacketOut delivery without depending on external libraries for packet serialisation.
+\end{itemize}
+
+\subsection{Key Data Structures}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Structure} & \textbf{Description} \\
+\midrule
+\texttt{\_hostname\_to\_ip} & \texttt{\{hostname: ip\}} --- forward lookup table \\
+\texttt{\_ip\_to\_hostname} & \texttt{\{ip: hostname\}} --- reverse lookup table \\
+\bottomrule
+\end{tabular}
+\caption{DNS Data Structures}
+\end{table}
+
+\subsection{Key Functions}
+
+\begin{lstlisting}[caption={DNS Registration and Query Routing}]
+# Bidirectional hostname <-> IP registration
+cls._hostname_to_ip[hostname] = ip
+cls._ip_to_hostname[ip] = hostname
+
+# Intercept UDP/53 to server_ip: extract DNS payload, build response
+response = cls._build_response(dns_data,
+    src_mac=eth.dst, dst_mac=eth.src,
+    src_ip=server_ip, dst_ip=client_ip,
+    src_port=53, dst_port=client_port)
+\end{lstlisting}
+
+\subsection{Hostname Convention}
+
+Hostnames are automatically derived from MAC addresses using a simple convention: a host with MAC address \texttt{00:00:00:00:00:02} receives the hostname \texttt{h2}. Each host is registered under both its bare name (\texttt{h2}) and its fully-qualified local name (\texttt{h2.local}). Additionally, static entries \texttt{dhcp.local} and \texttt{dns.local} are registered at startup, both pointing to the DNS server IP (192.168.1.1).
+
+% ============================================================
+% 8. NAT
+% ============================================================
+\section{NAT}
+
+\subsection{Functionality}
+
+The NAT (Network Address Translation) module enables communication between hosts in different subnets by performing source and destination address translation at the controller. This module is essential for scenarios where internal hosts (10.0.1.0/24) need to communicate with external hosts (10.0.2.0/24) through a single external-facing IP address.
+
+Key capabilities include:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{SNAT (Source NAT):} Rewrites the source IP of outbound packets from internal hosts to the NAT external IP (10.0.2.100), making all internal traffic appear to originate from a single address.
+    \item \textbf{DNAT (Destination NAT):} For inbound packets addressed to the NAT external IP, rewrites the destination IP back to the original internal host's address using the connection tracking table.
+    \item \textbf{Connection Tracking:} Maintains a stateful connection table that maps original 5-tuples (protocol, src IP, src port, dst IP, dst port) to NAT-assigned ephemeral ports, enabling correct reverse translation.
+    \item \textbf{Ephemeral Port Allocation:} Allocates ports from the range 50000--60000 for TCP and UDP connections, ensuring uniqueness across concurrent connections.
+    \item \textbf{ICMP Support:} Tracks ICMP connections using the ICMP identifier field rather than port numbers, enabling ping and traceroute through the NAT.
+    \item \textbf{Automatic Expiration:} Connections idle for more than 300 seconds are automatically cleaned up to prevent resource exhaustion.
+    \item \textbf{Full Header Rewriting:} Correctly rewrites Ethernet, IP, and transport-layer headers with proper checksum recalculation.
+    \item \textbf{Cross-Subnet ARP Proxy:} The controller responds to ARP requests for cross-subnet destinations with its own MAC address, ensuring all inter-subnet traffic passes through the controller for NAT processing.
+\end{itemize}
+
+\subsection{Key Data Structures}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Structure} & \textbf{Description} \\
+\midrule
+\texttt{\_connections} & \texttt{\{(proto, src\_ip, src\_port, dst\_ip, dst\_port): \{nat\_port, timestamp, dst\_ip\}\}} --- TCP/UDP connection tracking \\
+\texttt{\_icmp\_connections} & \texttt{\{(proto, src\_ip, icmp\_id, dst\_ip, 0): (icmp\_id, timestamp)\}} --- ICMP connection tracking \\
+\texttt{\_next\_nat\_port} & Next available ephemeral port (starts at 50000) \\
+\texttt{CONNECTION\_TIMEOUT} & 300 seconds idle timeout for connection cleanup \\
+\bottomrule
+\end{tabular}
+\caption{NAT Data Structures}
+\end{table}
+
+\subsection{Key Functions}
+
+\begin{lstlisting}[caption={NAT: Subnet Check and Core Rewrite}]
+# Determine if packet crosses internal/external subnet boundary
+def needs_nat(cls, src_ip, dst_ip):
+    return (cls.is_internal(src_ip) and cls.is_external(dst_ip)) or \
+           (cls.is_external(src_ip) and dst_ip == cls.NAT_EXTERNAL_IP) or \
+           (cls.is_external(src_ip) and cls.is_internal(dst_ip))
+
+# SNAT: rewrite src IP -> NAT_EXTERNAL_IP, track connection, update checksums
+raw = cls._rewrite_ip_src(raw, old_src_ip, cls.NAT_EXTERNAL_IP)
+if tcp_hdr:
+    raw = cls._rewrite_tcp_ports(raw, old_src_port, new_src_port, ...)
+raw = cls._rewrite_eth_macs(raw, controller_mac, dst_mac)
+return out_port, bytes(raw)
+\end{lstlisting}
+
+\subsection{Subnet Configuration}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Internal Subnet & 10.0.1.0/24 \\
+External Subnet & 10.0.2.0/24 \\
+NAT External IP & 10.0.2.100 \\
+Ephemeral Port Range & 50000 -- 60000 \\
+Connection Timeout & 300 seconds \\
+\bottomrule
+\end{tabular}
+\caption{NAT Configuration Parameters}
+\end{table}
+
+\subsection{NAT Translation Flow}
+
+The NAT translation process works bidirectionally:
+
+\textbf{Outbound (SNAT):} An internal host (e.g., 10.0.1.2) sends a packet to an external host (e.g., 10.0.2.2). The controller intercepts this packet, rewrites the source IP to 10.0.2.100, assigns an ephemeral NAT port, records the connection mapping, and forwards the rewritten packet to the external host.
+
+\textbf{Inbound (DNAT):} The external host responds to 10.0.2.100. The controller intercepts the response, looks up the connection tracking table using the destination port, identifies the original internal host, rewrites the destination IP back to 10.0.1.2, and delivers the packet to the correct internal host.
+
+The controller also acts as an ARP proxy for cross-subnet communication: when an internal host sends an ARP request for an external IP address, the controller replies with its own MAC address. This ensures that all cross-subnet traffic is directed to the controller for NAT processing.
+
+% ============================================================
+% 9. TESTING
+% ============================================================
+\section{Testing}
+
+All tests are implemented using the \texttt{pytest} framework in conjunction with the Mininet Python API. Tests construct network topologies programmatically, start the SDN controller, and verify correct behaviour through a combination of ping connectivity checks, packet capture analysis, and flow table inspection. Each test category exercises a specific module of the controller to ensure correctness under various network conditions.
+
+% ----------------------------------------
+\subsection{Switching Tests}
+
+\subsubsection{What It Verifies}
+
+The switching test suite validates the core functionality of the controller's topology discovery, shortest-path computation, and failover mechanisms. Specifically, the tests verify:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{Topology discovery and host learning:} After network startup, the controller correctly identifies all switches, links, and hosts through LLDP-based discovery and ARP-triggered host learning (via \texttt{arping}).
+    \item \textbf{End-to-end connectivity:} All host pairs can communicate (full-mesh \texttt{pingAll} with 0\% packet loss), confirming that shortest-path flows are correctly installed.
+    \item \textbf{Shortest-path correctness:} The controller's computed paths match the expected minimum hop count for each topology. This is verified by examining controller logs and flow table entries.
+    \item \textbf{Link failover and recovery:} When a link is brought down, the controller detects the failure, recomputes all affected paths, and installs new flow entries. Connectivity is maintained (possibly via a longer path). When the link is restored, paths are recomputed again to use the optimal route.
+\end{itemize}
+
+\subsubsection{Test Topologies}
+
+The switching tests exercise five distinct topologies to cover a range of network structures, from simple linear chains to complex meshes with redundant paths.
+
+\paragraph{Grid Topology (2$\times$3):}
+
+This topology arranges six switches in a 2-by-3 grid pattern, providing multiple equal-cost paths between hosts. It tests the controller's ability to select consistent shortest paths when multiple options exist.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+    node distance=2.5cm
+]
+% Switches
+\node[sw] (s1) at (0, 2) {s1};
+\node[sw] (s2) at (2.5, 2) {s2};
+\node[sw] (s3) at (5, 2) {s3};
+\node[sw] (s4) at (0, 0) {s4};
+\node[sw] (s5) at (2.5, 0) {s5};
+\node[sw] (s6) at (5, 0) {s6};
+
+% Hosts
+\node[host] (h1) at (0, 3.5) {h1};
+\node[host] (h2) at (5, 3.5) {h2};
+\node[host] (h3) at (5, -1.5) {h3};
+
+% Switch links
+\draw[link] (s1) -- (s2);
+\draw[link] (s2) -- (s3);
+\draw[link] (s4) -- (s5);
+\draw[link] (s5) -- (s6);
+\draw[link] (s1) -- (s4);
+\draw[link] (s2) -- (s5);
+\draw[link] (s3) -- (s6);
+
+% Host links
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s3);
+\draw[link, dashed] (h3) -- (s6);
+\end{tikzpicture}
+\caption{Grid Topology (2$\times$3) --- 6 switches, 3 hosts, multiple equal-cost paths}
+\end{figure}
+
+\paragraph{Mesh Topology (Ring + Diagonal):}
+
+A four-switch topology with full mesh connectivity (ring plus diagonal links). Every switch pair is directly connected, providing maximum path redundancy and testing the controller's ability to select the optimal single-hop path.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+]
+% Switches
+\node[sw] (s1) at (0, 2.5) {s1};
+\node[sw] (s2) at (3.5, 2.5) {s2};
+\node[sw] (s3) at (3.5, 0) {s3};
+\node[sw] (s4) at (0, 0) {s4};
+
+% Hosts
+\node[host] (h1) at (-1.5, 2.5) {h1};
+\node[host] (h2) at (5, 2.5) {h2};
+\node[host] (h3) at (5, 0) {h3};
+\node[host] (h4) at (-1.5, 0) {h4};
+
+% Switch links (full mesh)
+\draw[link] (s1) -- (s2);
+\draw[link] (s2) -- (s3);
+\draw[link] (s3) -- (s4);
+\draw[link] (s4) -- (s1);
+\draw[link] (s1) -- (s3);  % diagonal
+
+% Host links
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s2);
+\draw[link, dashed] (h3) -- (s3);
+\draw[link, dashed] (h4) -- (s4);
+\end{tikzpicture}
+\caption{Mesh Topology --- 4 switches fully connected, 4 hosts}
+\end{figure}
+
+\paragraph{Triangle Topology:}
+
+A minimal redundant topology with three switches forming a triangle. Tests basic shortest-path selection and failover with the simplest possible redundant structure.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+]
+\node[sw] (s1) at (2, 3) {s1};
+\node[sw] (s2) at (0, 0) {s2};
+\node[sw] (s3) at (4, 0) {s3};
+
+\node[host] (h1) at (2, 4.5) {h1};
+\node[host] (h2) at (-1.5, 0) {h2};
+\node[host] (h3) at (5.5, 0) {h3};
+
+\draw[link] (s1) -- (s2);
+\draw[link] (s2) -- (s3);
+\draw[link] (s1) -- (s3);
+
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s2);
+\draw[link, dashed] (h3) -- (s3);
+\end{tikzpicture}
+\caption{Triangle Topology --- 3 switches, 3 hosts, minimal redundancy}
+\end{figure}
+
+\paragraph{Diamond Topology:}
+
+A four-switch diamond where traffic between h1 and h2 must traverse two intermediate switches. Tests correct multi-hop path computation and ensures the controller selects one of the two equal-cost paths consistently.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+]
+\node[sw] (s1) at (0, 1.5) {s1};
+\node[sw] (s2) at (2.5, 3) {s2};
+\node[sw] (s3) at (2.5, 0) {s3};
+\node[sw] (s4) at (5, 1.5) {s4};
+
+\node[host] (h1) at (-1.8, 1.5) {h1};
+\node[host] (h2) at (6.8, 1.5) {h2};
+
+\draw[link] (s1) -- (s2);
+\draw[link] (s1) -- (s3);
+\draw[link] (s2) -- (s4);
+\draw[link] (s3) -- (s4);
+
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s4);
+\end{tikzpicture}
+\caption{Diamond Topology --- 4 switches, 2 hosts, two equal-cost paths}
+\end{figure}
+
+\paragraph{Line Topology:}
+
+A simple linear chain of four switches. Tests the controller's handling of a topology with no redundancy, where a single link failure partitions the network.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+]
+\node[host] (h1) at (-1.5, 0) {h1};
+\node[sw] (s1) at (0, 0) {s1};
+\node[sw] (s2) at (2.5, 0) {s2};
+\node[sw] (s3) at (5, 0) {s3};
+\node[sw] (s4) at (7.5, 0) {s4};
+\node[host] (h2) at (9, 0) {h2};
+
+\draw[link] (s1) -- (s2);
+\draw[link] (s2) -- (s3);
+\draw[link] (s3) -- (s4);
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s4);
+\end{tikzpicture}
+\caption{Line Topology --- 4 switches in a chain, 2 hosts, no redundancy}
+\end{figure}
+
+\paragraph{Heavy Mesh Topology:}
+
+A densely connected 2$\times$3 grid of six switches with additional diagonal cross-links, totalling eleven switch-to-switch edges. Eight hosts are distributed across the network. This topology tests the controller's ability to compute shortest paths through a highly redundant mesh and to reroute traffic when single, double, or even triple link failures occur. Because each switch has at least three switch-to-switch connections, the network can tolerate multiple simultaneous failures before any host becomes isolated.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+    cross/.style={thick, gray},
+]
+% Switches (2x3 grid)
+\node[sw] (s1) at (0, 0) {s1};
+\node[sw] (s2) at (3, 0) {s2};
+\node[sw] (s3) at (6, 0) {s3};
+\node[sw] (s4) at (0, -3) {s4};
+\node[sw] (s5) at (3, -3) {s5};
+\node[sw] (s6) at (6, -3) {s6};
+
+% Hosts
+\node[host] (h1) at (-1.2, 1.2) {h1};
+\node[host] (h2) at (1.2, 1.2) {h2};
+\node[host] (h3) at (3, 1.2) {h3};
+\node[host] (h4) at (6, 1.2) {h4};
+\node[host] (h5) at (0, -4.2) {h5};
+\node[host] (h6) at (3, -4.2) {h6};
+\node[host] (h7) at (5.0, -4.2) {h7};
+\node[host] (h8) at (7.0, -4.2) {h8};
+
+% Host-to-switch links (dashed)
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s1);
+\draw[link, dashed] (h3) -- (s2);
+\draw[link, dashed] (h4) -- (s3);
+\draw[link, dashed] (h5) -- (s4);
+\draw[link, dashed] (h6) -- (s5);
+\draw[link, dashed] (h7) -- (s6);
+\draw[link, dashed] (h8) -- (s6);
+
+% Horizontal links
+\draw[link] (s1) -- (s2);
+\draw[link] (s2) -- (s3);
+\draw[link] (s4) -- (s5);
+\draw[link] (s5) -- (s6);
+
+% Vertical links
+\draw[link] (s1) -- (s4);
+\draw[link] (s2) -- (s5);
+\draw[link] (s3) -- (s6);
+
+% Cross-links (diagonals)
+\draw[cross] (s1) -- (s5);
+\draw[cross] (s2) -- (s4);
+\draw[cross] (s2) -- (s6);
+\draw[cross] (s3) -- (s5);
+
+\end{tikzpicture}
+\caption{Heavy Mesh Topology --- 6 switches in a 2$\times$3 grid with cross-links, 8 hosts, 11 switch-to-switch links}
+\end{figure}
+
+\subsubsection{Test Cases}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}p{4.5cm}p{5cm}p{3.5cm}@{}}
+\toprule
+\textbf{Test Case} & \textbf{Verification} & \textbf{Topology} \\
+\midrule
+\texttt{test\_pingall} & Full mesh connectivity with 0\% loss & All topologies \\
+\texttt{test\_shortest\_path} & Path length matches expected hop count & Grid, Mesh, Diamond \\
+\texttt{test\_link\_failure} & Connectivity maintained after link down & Mesh, Triangle, Grid \\
+\texttt{test\_link\_recovery} & Optimal path restored after link up & Mesh, Triangle \\
+\texttt{test\_no\_redundancy\_failure} & Correct behaviour when no alternate path exists & Line \\
+\bottomrule
+\end{tabular}
+\caption{Switching Test Cases}
+\end{table}
+
+\subsubsection{Results}
+
+\begin{center}
+\fbox{\textbf{\large All switching tests: PASSED} \checkmark}
+\end{center}
+
+% ----------------------------------------
+\subsection{DHCP Tests}
+
+\subsubsection{What It Verifies}
+
+The DHCP test suite validates that the controller's built-in DHCP server correctly allocates IP addresses to hosts, handling the complete DHCP lifecycle:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{DISCOVER/OFFER:} Hosts broadcast a DHCP DISCOVER message and receive a valid OFFER with an IP from the configured pool.
+    \item \textbf{REQUEST/ACK:} Hosts confirm the offered address via REQUEST and receive an ACK with correct lease parameters.
+    \item \textbf{IP Uniqueness:} Multiple hosts receive distinct IP addresses with no conflicts.
+    \item \textbf{Pool Range:} All allocated addresses fall within the configured pool (192.168.1.2--192.168.1.100).
+\end{itemize}
+
+\subsubsection{Test Topology}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+]
+\node[sw] (s1) at (2, 0) {s1};
+\node[host] (h1) at (0.5, 1.5) {h1};
+\node[host] (h2) at (3.5, 1.5) {h2};
+
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s1);
+\end{tikzpicture}
+\caption{DHCP Test Topology --- single switch, 2 hosts}
+\end{figure}
+
+\subsubsection{Results}
+
+\begin{center}
+\fbox{\textbf{\large All DHCP tests: PASSED} \checkmark}
+\end{center}
+
+% ----------------------------------------
+\subsection{Firewall Tests}
+
+\subsubsection{What It Verifies}
+
+The firewall test suite validates that deny rules are correctly translated into drop flows and enforced at the data plane:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{ICMP Filtering:} Verifies that ICMP traffic (ping) is blocked between hosts specified in the deny rules while remaining permitted between other host pairs.
+    \item \textbf{TCP Port Filtering:} Verifies that TCP connections to blocked ports (e.g., port 80) are rejected while connections to allowed ports (e.g., port 8080) succeed.
+    \item \textbf{Rule Selectivity:} Ensures that firewall rules only affect the traffic they are designed to match, without impacting unrelated flows.
+\end{itemize}
+
+\subsubsection{Test Topology}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+]
+\node[sw] (s1) at (2.5, 0) {s1};
+\node[host] (h1) at (0, 1.5) {h1};
+\node[host] (h2) at (2.5, 1.5) {h2};
+\node[host] (h3) at (5, 1.5) {h3};
+
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s1);
+\draw[link, dashed] (h3) -- (s1);
+\end{tikzpicture}
+\caption{Firewall Test Topology --- single switch, 3 hosts}
+\end{figure}
+
+\subsubsection{Results}
+
+\begin{center}
+\fbox{\textbf{\large All firewall tests: PASSED} \checkmark}
+\end{center}
+
+% ----------------------------------------
+\subsection{DNS Tests}
+
+\subsubsection{What It Verifies}
+
+The DNS test suite validates the in-controller DNS resolution service:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{A Record Resolution:} Querying \texttt{h2.local} from h1 returns the correct IP address assigned to h2.
+    \item \textbf{NXDOMAIN:} Querying a non-existent hostname (\texttt{nonexistent.local}) returns the NXDOMAIN response code.
+    \item \textbf{PTR Reverse Lookup:} Reverse-resolving an IP address returns the correct hostname.
+    \item \textbf{Automatic Registration:} Hosts obtain their IPs via DHCP, and the controller automatically registers their hostnames in the DNS upon learning their ARP bindings.
+\end{itemize}
+
+\subsubsection{Test Topology}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+]
+\node[host] (h1) at (0, 0) {h1};
+\node[sw] (s1) at (2.5, 0) {s1};
+\node[host] (h2) at (5, 0) {h2};
+
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (s1) -- (h2);
+\end{tikzpicture}
+\caption{DNS Test Topology --- single switch, 2 hosts}
+\end{figure}
+
+\subsubsection{Results}
+\begin{center}
+\fbox{\textbf{\large All DNS tests: PASSED} \checkmark}
+\end{center}
+
+% ----------------------------------------
+\subsection{NAT Tests}
+
+\subsubsection{What It Verifies}
+
+The NAT test suite validates correct address translation between internal and external subnets:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{Basic NAT Connectivity:} Internal host h1 (10.0.1.2) can successfully ping external host h2 (10.0.2.2) through the NAT.
+    \item \textbf{SNAT Source Verification:} External host h2 observes the NAT external IP (10.0.2.100) as the packet source, not h1's real internal IP address.
+    \item \textbf{Bidirectional Connectivity:} External host h2 can initiate communication to h1 through DNAT (by sending to 10.0.2.100).
+    \item \textbf{TCP Through NAT:} A TCP connection (e.g., HTTP on port 80) from h1 to h2 is correctly translated in both directions, maintaining connection state.
+\end{itemize}
+
+\subsubsection{Test Topology}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+    subnet/.style={draw, dashed, rounded corners, inner sep=0.4cm}
+]
+\node[host] (h1) at (0, 0) {h1\\{\scriptsize 10.0.1.2}};
+\node[sw] (s1) at (2.5, 0) {s1};
+\node[sw] (s2) at (5, 0) {s2};
+\node[host] (h2) at (7.5, 0) {h2\\{\scriptsize 10.0.2.2}};
+
+\draw[link, dashed] (h1) -- (s1);
+\draw[link] (s1) -- (s2);
+\draw[link, dashed] (s2) -- (h2);
+
+% Subnet labels
+\node[above, font=\scriptsize\itshape] at (1.25, 0.6) {Internal: 10.0.1.0/24};
+\node[above, font=\scriptsize\itshape] at (6.25, 0.6) {External: 10.0.2.0/24};
+
+% NAT label
+\node[below, font=\scriptsize\bfseries] at (3.75, -0.5) {NAT: 10.0.2.100};
+\end{tikzpicture}
+\caption{NAT Test Topology --- 2 switches, 2 hosts in different subnets}
+\end{figure}
+
+\subsubsection{Results}
+
+\begin{center}
+\fbox{\textbf{\large All NAT tests: PASSED} \checkmark}
+\end{center}
+
+% ============================================================
+\end{document}

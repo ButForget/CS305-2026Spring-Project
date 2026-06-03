@@ -304,6 +304,16 @@ def run_mininet(topo_name):
     # automatic tests
     run_tests(net, topo_name)
 
+    # Clear all flows so manual pings in CLI re-trigger path computation
+    print("\n========== Clearing flow tables for manual testing ==========")
+    for s in net.switches:
+        s.cmd('ovs-ofctl del-flows %s' % s.name)
+    time.sleep(1)
+    do_arp_all(net)
+    time.sleep(2)
+    print("Flows cleared. Manual pings will now show shortest-path in controller log.")
+    print("Try in CLI: h1 ping h2\n")
+
     # then enter CLI for manual tests
     CLI(net)
     net.stop()
