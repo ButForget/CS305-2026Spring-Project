@@ -111,9 +111,11 @@ def run_test():
 
         hosts = sorted(net.hosts, key=lambda h: int(h.name[1:]))
         results = []
+
         for h in hosts:
-            dhclient(h, timeout_s=12)
-            time.sleep(0.5)
+            h.sendCmd("timeout 10 dhclient -v %s-eth0 2>&1" % h.name)
+        for h in hosts:
+            h.waitOutput(verbose=False)
 
         time.sleep(2)
 
