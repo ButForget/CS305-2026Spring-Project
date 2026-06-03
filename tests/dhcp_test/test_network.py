@@ -10,7 +10,9 @@ from mininet.net import Mininet
 from mininet.node import RemoteController
 from mininet.topo import Topo
 
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 sys.path.insert(0, _project_root)
 try:
     from dhcp import Config
@@ -107,7 +109,9 @@ def reset_hosts(net):
     for h in net.hosts:
         h.cmd("pkill -f 'dhclient.*%s-eth0' 2>/dev/null" % h.name)
         h.cmd("ip addr flush dev %s-eth0 2>/dev/null" % h.name)
-        h.cmd("rm -f /var/lib/dhcp/dhclient*leases /var/lib/dhclient/dhclient*leases 2>/dev/null")
+        h.cmd(
+            "rm -f /var/lib/dhcp/dhclient*leases /var/lib/dhclient/dhclient*leases 2>/dev/null"
+        )
     time.sleep(1)
 
 
@@ -137,7 +141,11 @@ def demo_tc1_basic(net):
         ips.append(ip)
         in_pool = _ip_in_pool(ip) if ip else False
         detail = f"{h.name} IP={ip}"
-        record(detail, bool(ip and in_pool), "" if (ip and in_pool) else "outside pool or no IP")
+        record(
+            detail,
+            bool(ip and in_pool),
+            "" if (ip and in_pool) else "outside pool or no IP",
+        )
         if not (ip and in_pool):
             all_pass = False
 
@@ -147,7 +155,7 @@ def demo_tc1_basic(net):
     return all_pass and unique
 
 
-def demo_tc4_release(net):
+def demo_tc2_release(net):
     """TC2 (Bonus): DHCP RELEASE — IP reclamation with exhaustion proof."""
     hosts = sorted(net.hosts, key=lambda h: h.name)
     h1 = hosts[0]
@@ -158,8 +166,13 @@ def demo_tc4_release(net):
     if pool_n > 3:
         print()
         print("  [WARN] RELEASE test requires pool_size <= 3 to prove reclamation.")
-        print("  [WARN] Current pool has %d IPs. Fallback to lenient distinct-IP check." % pool_n)
-        print("  [WARN] Consider setting end_ip='192.168.1.4' in dhcp.py for strict test.")
+        print(
+            "  [WARN] Current pool has %d IPs. Fallback to lenient distinct-IP check."
+            % pool_n
+        )
+        print(
+            "  [WARN] Consider setting end_ip='192.168.1.4' in dhcp.py for strict test."
+        )
 
         dhclient(h1)
         dhclient(h2)
@@ -187,19 +200,28 @@ def demo_tc4_release(net):
         dhclient(h2)
         wait_for_ip(h2)
         ip2_after = h2.defaultIntf().updateIP()
-        record(f"h2 re-request after release", bool(ip2_after and _ip_in_pool(ip2_after)),
-               f"IP={ip2_after}")
+        record(
+            f"h2 re-request after release",
+            bool(ip2_after and _ip_in_pool(ip2_after)),
+            f"IP={ip2_after}",
+        )
 
         strip_ip(h1)
         dhclient(h1)
         wait_for_ip(h1)
         ip1_after = h1.defaultIntf().updateIP()
-        record(f"h1 re-request after release", bool(ip1_after and _ip_in_pool(ip1_after)),
-               f"IP={ip1_after}")
+        record(
+            f"h1 re-request after release",
+            bool(ip1_after and _ip_in_pool(ip1_after)),
+            f"IP={ip1_after}",
+        )
 
         distinct = ip1_after != ip2_after
-        record("Both hosts have distinct IPs after release cycle", distinct,
-               f"h1={ip1_after} h2={ip2_after}")
+        record(
+            "Both hosts have distinct IPs after release cycle",
+            distinct,
+            f"h1={ip1_after} h2={ip2_after}",
+        )
         return distinct
 
     # === STRICT PATH: pool_size <= 3, exhaustion proof ===
@@ -226,8 +248,11 @@ def demo_tc4_release(net):
         return False
 
     unique_init = len(set(i for i in [ip1, ip2, ip3] if i)) == (3 if h3 else 2)
-    record("TC2: pool exhausted — h1=%s, h2=%s%s" % (
-        ip1, ip2, ", h3=%s" % ip3 if h3 else ""), unique_init)
+    record(
+        "TC2: pool exhausted — h1=%s, h2=%s%s"
+        % (ip1, ip2, ", h3=%s" % ip3 if h3 else ""),
+        unique_init,
+    )
     if not unique_init:
         return False
 
@@ -256,12 +281,15 @@ def demo_tc4_release(net):
         spare_name = h2.name
 
     if ip_spare and _ip_in_pool(ip_spare):
-        reclaimed = (ip_spare == ip1)
+        reclaimed = ip_spare == ip1
         if reclaimed:
             record("TC2: %s reclaimed h1's released IP %s" % (spare_name, ip1), True)
         else:
-            record("TC2: %s got IP %s (released IP was %s, release still plausible)"
-                   % (spare_name, ip_spare, ip1), True)
+            record(
+                "TC2: %s got IP %s (released IP was %s, release still plausible)"
+                % (spare_name, ip_spare, ip1),
+                True,
+            )
     else:
         record("TC2: %s failed to get IP after release" % spare_name, False)
         return False
@@ -280,7 +308,7 @@ def demo_tc4_release(net):
     return all_pass
 
 
-def demo_tc5_duplicate(net):
+def demo_tc3_duplicate(net):
     """TC3 (Bonus): h2 steals h1's IP → server NAKs, h2 gets different IP."""
     h1 = net.get("h1")
     h2 = net.get("h2")
@@ -319,7 +347,9 @@ def demo_tc5_duplicate(net):
     time.sleep(2)
     result = h2.cmd("ping -c 2 -W 1 %s" % ip_h1)
     ping_ok = " 0% packet loss" in result
-    record("h2 can ping h1 after test", ping_ok, "may not apply depending on binding state")
+    record(
+        "h2 can ping h1 after test", ping_ok, "may not apply depending on binding state"
+    )
     return True
 
 
@@ -348,6 +378,7 @@ def print_summary():
 
 def run_mininet():
     from mininet.clean import cleanup
+
     cleanup()
 
     topo = TestTopo(host_count=3)
@@ -366,20 +397,22 @@ def run_mininet():
     reset_hosts(net)
 
     section("TC2 (Bonus): DHCP RELEASE — IP reclamation")
-    demo_tc4_release(net)
+    demo_tc2_release(net)
 
     reset_hosts(net)
 
     section("TC3 (Bonus): Duplicate IP — NAK rejection")
-    demo_tc5_duplicate(net)
+    demo_tc3_duplicate(net)
 
     section("")
     all_pass = print_summary()
 
     print()
-    if sys.stdin.isatty() and '--no-cli' not in sys.argv:
+    if sys.stdin.isatty() and "--no-cli" not in sys.argv:
         print("Entering Mininet CLI for manual exploration. Type 'exit' to finish.")
-        print('Try: h1 dhclient -v h1-eth0   /   h1 ping h2   /   h1 arping -c1 -A -I h1-eth0 <IP>')
+        print(
+            "Try: h1 dhclient -v h1-eth0   /   h1 ping h2   /   h1 arping -c1 -A -I h1-eth0 <IP>"
+        )
         CLI(net)
 
     net.stop()
