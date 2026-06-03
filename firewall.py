@@ -15,6 +15,8 @@ class FirewallRule:
     src_port: object = None
     dst_port: object = None
     action: str = "deny"
+    src_mask: int = 32
+    dst_mask: int = 32
 
 
 class Firewall:
@@ -26,9 +28,9 @@ class Firewall:
         "": 0,
         "*": 0,
         "any": 0,
-        "icmp": inet.IPPROTO_ICMP,
-        "tcp": inet.IPPROTO_TCP,
-        "udp": inet.IPPROTO_UDP,
+        "icmp": inet.IPPROTO_ICMP, # 1
+        "tcp": inet.IPPROTO_TCP,   # 6
+        "udp": inet.IPPROTO_UDP,   # 17
     }
 
     def __init__(self, rule_file="firewall_rules.json"):
@@ -40,6 +42,7 @@ class Firewall:
 
     # Some helper functions that may be useful
     def _normalize_any(self, value):
+        # ip 统配 none
         if value is None:
             return None
         if isinstance(value, str) and value.strip().lower() in ["", "*", "any"]:
@@ -47,20 +50,41 @@ class Firewall:
         return value
 
     def _normalize_proto(self, proto):
+        # TCP -> tcp
         proto = self._normalize_any(proto)
         if proto is None:
             return None
         return str(proto).lower()
 
     def _proto_to_number(self, proto):
+        # tcp -> proto num
         proto = self._normalize_proto(proto)
         return self.PROTO_MAP.get(proto, 0)
 
     def _normalize_port(self, value):
+        # prot 统配 0
         value = self._normalize_any(value)
         if value is None:
             return 0
         return int(value)
+
+    @staticmethod
+    def _parse_cidr(value):
+        """Parse CIDR notation like '192.168.0.0/16' into (ip_str, mask_int).
+        Returns (value, 32) if no mask is present."""
+
+        # mask code using
+        if not value or not isinstance(value, str):
+            return value, 32
+        if '/' in value:
+            parts = value.split('/', 1)
+            ip_part = parts[0].strip() or None
+            try:
+                mask = int(parts[1])
+            except (ValueError, IndexError):
+                mask = 32
+            return ip_part, mask
+        return value, 32
 
     def _load_rules(self, rule_file):
         """
@@ -74,13 +98,19 @@ class Firewall:
                 # handle both {"rules": [...]} dict format and [...] list format
                 items = data.get("rules", []) if isinstance(data, dict) else data
                 for item in items:
+                    src_ip_raw = item.get("src_ip")
+                    dst_ip_raw = item.get("dst_ip")
+                    src_ip, src_mask = Firewall._parse_cidr(src_ip_raw)
+                    dst_ip, dst_mask = Firewall._parse_cidr(dst_ip_raw)
                     rules.append(FirewallRule(
-                        src_ip=item.get("src_ip"),
-                        dst_ip=item.get("dst_ip"),
+                        src_ip=src_ip,
+                        dst_ip=dst_ip,
                         proto=item.get("proto"),
                         src_port=item.get("src_port"),
                         dst_port=item.get("dst_port"),
-                        action=item.get("action", "deny")
+                        action=item.get("action", "deny"),
+                        src_mask=src_mask,
+                        dst_mask=dst_mask,
                     ))
         except (FileNotFoundError, json.JSONDecodeError):
             print(f"Error: Failed to load firewall rules from {rule_file}\n")     
@@ -116,15 +146,19 @@ class Firewall:
                 # normalize IPs as well
                 src_ip = self._normalize_any(rule.src_ip)
                 dst_ip = self._normalize_any(rule.dst_ip)
+                src_mask = rule.src_mask
+                dst_mask = rule.dst_mask
 
                 # TODO: skip invalid port rules
                 if (src_port or dst_port) and not proto_num:
+                    # have port but no proto
                     continue
                 if (src_port or dst_port) and proto_num not in (inet.IPPROTO_TCP, inet.IPPROTO_UDP):
+                    # have port but icmp need no port
                     continue
 
                 # TODO: avoid duplicated flow installation
-                rule_key = (dpid, src_ip, dst_ip, proto_num, src_port, dst_port)
+                rule_key = (dpid, src_ip, dst_ip, proto_num, src_port, dst_port, src_mask, dst_mask)
                 if rule_key in self.installed:
                     continue
                 self.installed.add(rule_key)
@@ -141,9 +175,11 @@ class Firewall:
                     priority=self.PRIORITY,
                     dl_type=ether.ETH_TYPE_IP,
                     nw_src=src_ip if src_ip else 0,
+                    src_mask=src_mask,
                     nw_dst=dst_ip if dst_ip else 0,
+                    dst_mask=dst_mask,
                     nw_proto=proto_num,
                     tp_src=src_port,
                     tp_dst=dst_port,
-                    actions=[]
+                    actions=[] # 空动作 = DROP
                 )
