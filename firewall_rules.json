@@ -15,6 +15,24 @@
       "src_port": "*",
       "dst_port": 80,
       "action": "deny"
+    },
+    {
+      "_comment": "CIDR mask: 192.168.117.0/30 covers .0-.3 (h1,h2), blocks TCP/9999",
+      "src_ip": "192.168.117.0/30",
+      "dst_ip": "*",
+      "proto": "tcp",
+      "src_port": "*",
+      "dst_port": 9999,
+      "action": "deny"
+    },
+    {
+      "_comment": "CIDR mask: 192.168.117.4/31 covers .4-.5 (h3), blocks TCP/9998",
+      "src_ip": "192.168.117.4/31",
+      "dst_ip": "*",
+      "proto": "tcp",
+      "src_port": "*",
+      "dst_port": 9998,
+      "action": "deny"
     }
   ]
 }
