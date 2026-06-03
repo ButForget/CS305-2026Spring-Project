@@ -3,8 +3,9 @@ DNS Server module for the SDN controller.
 
 Intercepts DNS queries (UDP port 53) addressed to the controller's DNS server IP
 (192.168.1.1) and returns responses for registered hostnames.  Hostnames are
-automatically registered when DHCP leases are assigned (via DHCPServer), and
-static mappings can be added.
+automatically registered when the controller learns host locations via ARP/IP
+traffic (in controller.py:_learn_host_from_packet).  Static mappings can also be
+added via register_host().
 
 Supports:
   - A record queries (hostname -> IP)
@@ -126,9 +127,11 @@ class DNSServer:
         pos = 12
         qname_labels = []
         qname_raw_start = pos
+        ended_on_pointer = False
         while pos < len(dns_query) and dns_query[pos] != 0:
             if (dns_query[pos] & 0xC0) == 0xC0:
                 pos += 2
+                ended_on_pointer = True
                 break
             length = dns_query[pos]
             pos += 1
@@ -137,7 +140,8 @@ class DNSServer:
             qname_labels.append(dns_query[pos:pos + length].decode("ascii", errors="replace"))
             pos += length
         qname = ".".join(qname_labels)
-        pos += 1
+        if not ended_on_pointer:
+            pos += 1  # Skip the zero terminator (only when name ended normally)
         if pos + 4 > len(dns_query):
             return None
         qtype, qclass = struct.unpack("!HH", dns_query[pos:pos + 4])

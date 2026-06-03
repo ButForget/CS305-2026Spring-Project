@@ -80,7 +80,16 @@ class NAT:
 
     @classmethod
     def _get_nat_port(cls):
-        """Allocate a NAT port for TCP/UDP translation."""
+        """Allocate a NAT port for TCP/UDP translation (skip ports already in use)."""
+        used_ports = {info["nat_port"] for info in cls._connections.values()}
+        for _ in range(cls._nat_port_max - 50000 + 1):
+            port = cls._next_nat_port
+            cls._next_nat_port += 1
+            if cls._next_nat_port > cls._nat_port_max:
+                cls._next_nat_port = 50000
+            if port not in used_ports:
+                return port
+        # Fallback (all ports exhausted — extremely unlikely)
         port = cls._next_nat_port
         cls._next_nat_port += 1
         if cls._next_nat_port > cls._nat_port_max:
@@ -89,7 +98,7 @@ class NAT:
 
     @classmethod
     def _cleanup_expired(cls):
-        """Remove expired connection entries."""
+        """Remove expired connection entries (TCP/UDP and ICMP)."""
         now = time.time()
         expired_keys = [
             k for k, v in cls._connections.items()
@@ -97,6 +106,14 @@ class NAT:
         ]
         for k in expired_keys:
             del cls._connections[k]
+
+        # Also expire ICMP connection entries
+        expired_icmp = [
+            k for k, (_, ts) in cls._icmp_connections.items()
+            if now - ts > cls.CONNECTION_TIMEOUT
+        ]
+        for k in expired_icmp:
+            del cls._icmp_connections[k]
 
     @classmethod
     def handle_nat(cls, datapath, in_port, pkt, hosts, arp_table, controller_mac):
@@ -260,7 +277,8 @@ class NAT:
             dst_port = tcp_hdr.dst_port
             src_port = tcp_hdr.src_port
             for (p, oip, oport, eip, eport), info in cls._connections.items():
-                if info["nat_port"] == dst_port and eip == src_ip:
+                if (info["nat_port"] == dst_port and p == proto
+                        and eip == src_ip and eport == src_port):
                     original_ip = oip
                     original_port = oport
                     original_src_port = eport
@@ -270,7 +288,8 @@ class NAT:
             dst_port = udp_hdr.dst_port
             src_port = udp_hdr.src_port
             for (p, oip, oport, eip, eport), info in cls._connections.items():
-                if info["nat_port"] == dst_port and eip == src_ip:
+                if (info["nat_port"] == dst_port and p == proto
+                        and eip == src_ip and eport == src_port):
                     original_ip = oip
                     original_port = oport
                     original_src_port = eport
@@ -379,7 +398,9 @@ class NAT:
         # TCP checksum includes pseudo-header
         src_ip = socket.inet_ntoa(bytes(raw[ip_start + 12:ip_start + 16]))
         dst_ip = socket.inet_ntoa(bytes(raw[ip_start + 16:ip_start + 20]))
-        tcp_len = len(raw) - tcp_start
+        ip_total_len = struct.unpack("!H", raw[ip_start + 2:ip_start + 4])[0]
+        ip_hdr_len = (raw[ip_start] & 0x0F) * 4
+        tcp_len = ip_total_len - ip_hdr_len
         pseudo = cls._tcp_udp_pseudo_header(src_ip, dst_ip, 6, tcp_len)
         tcp_segment = bytes(raw[tcp_start:tcp_start + tcp_len])
         csum = cls._checksum(pseudo + tcp_segment)
@@ -402,7 +423,9 @@ class NAT:
         struct.pack_into("!H", raw, udp_start + 6, 0)
         src_ip = socket.inet_ntoa(bytes(raw[ip_start + 12:ip_start + 16]))
         dst_ip = socket.inet_ntoa(bytes(raw[ip_start + 16:ip_start + 20]))
-        udp_len = len(raw) - udp_start
+        ip_total_len = struct.unpack("!H", raw[ip_start + 2:ip_start + 4])[0]
+        ip_hdr_len = (raw[ip_start] & 0x0F) * 4
+        udp_len = ip_total_len - ip_hdr_len
         pseudo = cls._tcp_udp_pseudo_header(src_ip, dst_ip, 17, udp_len)
         udp_segment = bytes(raw[udp_start:udp_start + udp_len])
         if len(udp_segment) % 2:

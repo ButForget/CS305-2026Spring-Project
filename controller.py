@@ -37,7 +37,7 @@ class ControllerApp(app_manager.OSKenApp):
         # self.path_algo = "floyd-warshall"
         self.ofctls = {}
         self.firewall = Firewall()
-        self.controller_mac = '7e:49:b3:f0:f9:99'
+        self.controller_mac = DHCPServer.hardware_addr
         self.dns_server_ip = DNSServer.server_ip
         self.nat_external_ip = NAT.NAT_EXTERNAL_IP
         # Register static DNS entry for DHCP server
@@ -213,7 +213,7 @@ class ControllerApp(app_manager.OSKenApp):
                 dns_response = DNSServer.handle_dns(datapath, in_port, pkt, msg.data)
                 if dns_response:
                     self._send_raw_packet(datapath, in_port, dns_response)
-                return
+                    return
 
             # Reactive forwarding for non-ARP packets
             src_mac = eth.src

@@ -4,8 +4,9 @@
 
 The DNS module implements a lightweight DNS server inside the SDN controller.
 It intercepts DNS queries (UDP port 53) addressed to `192.168.1.1`, maintains
-a hostname↔IP mapping table (populated automatically from DHCP and gratuitous
-ARP), and returns DNS responses via PacketOut through the OpenFlow switch.
+a hostname↔IP mapping table (populated automatically when the controller learns
+hosts via ARP and IP traffic), and returns DNS responses via PacketOut through
+the OpenFlow switch.
 
 **Supported query types:** A (hostname → IP), PTR (IP → hostname), NXDOMAIN.
 
