@@ -195,7 +195,7 @@ class DNSServer:
                 response_answers += rdata
                 response_answers = name_enc + response_answers
             else:
-                rcode = cls.RCODE_NXDOMAINB    # 域名不存在
+                rcode = cls.RCODE_NXDOMAIN    # 域名不存在
 
         elif qtype == cls.TYPE_PTR:
             # NAME -> Ip
