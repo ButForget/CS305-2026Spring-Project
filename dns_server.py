@@ -32,7 +32,7 @@ class DNSServer:
     # DNS server IP (must match Config.server_ip)
     server_ip = "192.168.1.1"
 
-    # Forwarding DNS (for queries we can't answer locally)
+    # Reserved for future DNS forwarding support
     upstream_dns = "8.8.8.8"
 
     # Hostname -> IP mappings

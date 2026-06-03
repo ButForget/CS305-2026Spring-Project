@@ -228,7 +228,7 @@ SNAT（源地址转换）和 DNAT（目的地址转换）。控制器拦截跨�
 | 属性 | 类型 | 描述 |
 |-----------|------|-------------|
 | `_connections` | `dict` | TCP/UDP 连接跟踪：`{(proto, int_ip, int_port, ext_ip, ext_port): {"nat_port": N, "timestamp": T}}` |
-| `_icmp_connections` | `dict` | ICMP 连接跟踪：`{(proto, int_ip, icmp_id, ext_ip): (nat_icmp_id, timestamp)}` |
+| `_icmp_connections` | `dict` | ICMP 连接跟踪：`{(proto, int_ip, icmp_id, ext_ip, 0): (icmp_id, timestamp)}`（复用 5 元组 key 结构，ICMP identifier 记录在 key 和 value 中） |
 
 ---
 

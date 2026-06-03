@@ -232,8 +232,18 @@ class NAT:
         else:
             icmp_hdr = pkt.get_protocol(icmp.icmp)
             if icmp_hdr:
-                conn_key = (proto, old_src_ip, 0, dst_ip, 0)
-                cls._icmp_connections[conn_key] = (0, time.time())
+                # Extract ICMP identifier from raw packet for per-flow tracking
+                icmp_id = 0
+                try:
+                    ip_start = 14
+                    ip_hdr_len_raw = (raw[ip_start] & 0x0F) * 4
+                    icmp_start = ip_start + ip_hdr_len_raw
+                    if icmp_start + 6 <= len(raw):
+                        icmp_id = struct.unpack("!H", raw[icmp_start + 4:icmp_start + 6])[0]
+                except Exception:
+                    pass
+                conn_key = (proto, old_src_ip, icmp_id, dst_ip, 0)
+                cls._icmp_connections[conn_key] = (icmp_id, time.time())
 
         # Rewrite source IP FIRST (so TCP/UDP checksum uses new IP)
         raw = cls._rewrite_ip_src(raw, old_src_ip, new_src_ip)
@@ -310,7 +320,7 @@ class NAT:
             if not original_ip:
                 for conn_key, (icmp_id, ts) in cls._icmp_connections.items():
                     (p, oip, oport, eip, eport) = conn_key
-                    if eip == src_ip:
+                    if eip == src_ip and p == proto:
                         original_ip = oip
                         cls._icmp_connections[conn_key] = (icmp_id, time.time())
                         break
@@ -372,20 +382,24 @@ class NAT:
 
     @classmethod
     def _rewrite_ip_src(cls, raw, old_ip, new_ip):
-        """Rewrite source IP at exact offset 26 (14 eth + 12) and update IP checksum."""
+        """Rewrite source IP and update IP checksum (uses dynamic IHL)."""
         new_bytes = socket.inet_aton(new_ip)
-        src_offset = 26  # 14 (Ethernet) + 12 (offset of src IP in IP header)
+        ip_start = 14
+        ip_hdr_len = (raw[ip_start] & 0x0F) * 4
+        src_offset = ip_start + 12  # offset of src IP within IP header
         raw[src_offset:src_offset + 4] = new_bytes
-        cls._update_ip_checksum(raw, 14)
+        cls._update_ip_checksum(raw, ip_start)
         return raw
 
     @classmethod
     def _rewrite_ip_dst(cls, raw, old_ip, new_ip):
-        """Rewrite destination IP at exact offset 30 (14 eth + 16) and update IP checksum."""
+        """Rewrite destination IP and update IP checksum (uses dynamic IHL)."""
         new_bytes = socket.inet_aton(new_ip)
-        dst_offset = 30  # 14 (Ethernet) + 16 (offset of dst IP in IP header)
+        ip_start = 14
+        ip_hdr_len = (raw[ip_start] & 0x0F) * 4
+        dst_offset = ip_start + 16  # offset of dst IP within IP header
         raw[dst_offset:dst_offset + 4] = new_bytes
-        cls._update_ip_checksum(raw, 14)
+        cls._update_ip_checksum(raw, ip_start)
         return raw
 
     @classmethod

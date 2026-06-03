@@ -210,10 +210,13 @@ class ControllerApp(app_manager.OSKenApp):
             # --- DNS handling ---
             pkt_udp = pkt.get_protocol(udp.udp)
             if pkt_udp and pkt_udp.dst_port == 53:
-                dns_response = DNSServer.handle_dns(datapath, in_port, pkt, msg.data)
-                if dns_response:
-                    self._send_raw_packet(datapath, in_port, dns_response)
-                    return
+                pkt_ipv4_dns = pkt.get_protocol(ipv4.ipv4)
+                if pkt_ipv4_dns and pkt_ipv4_dns.dst == self.dns_server_ip:
+                    dns_response = DNSServer.handle_dns(datapath, in_port, pkt, msg.data)
+                    if dns_response:
+                        self._send_raw_packet(datapath, in_port, dns_response)
+                    return  # Queries to our DNS: handled or dropped
+                # Forwarded DNS traffic (not for us): fall through to normal forwarding
 
             # Reactive forwarding for non-ARP packets
             src_mac = eth.src
@@ -232,7 +235,7 @@ class ControllerApp(app_manager.OSKenApp):
                 )
                 if nat_data:
                     self._send_raw_packet(datapath, out_port, nat_data)
-                    return
+                return  # NAT-eligible packets: handled or dropped (no flooding)
 
             # Forward to destination if location is known
             if dst_mac in self.hosts:
@@ -249,8 +252,8 @@ class ControllerApp(app_manager.OSKenApp):
                         # Install flows so subsequent packets are forwarded in hardware
                         self.install_path(path, dst_mac, dst_port)
                         self.send_packet_out(datapath, out_port, pkt, buffer_id=msg.buffer_id)
-            else: # todo: can be deleted according the readme
-                    # Destination unknown, flood
+            else:
+                # Destination unknown, flood
                 self.flood_packet(datapath, in_port, pkt)
 
         except Exception as e:
