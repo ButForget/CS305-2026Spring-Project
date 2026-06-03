@@ -34,7 +34,8 @@ class NAT:
     # Connection tracking: {(proto, internal_ip, internal_port, external_ip, external_port): nat_port}
     _connections = {}
 
-    # For ICMP: {(proto, internal_ip, icmp_id, external_ip): (nat_icmp_id, timestamp)}
+    # For ICMP: {(proto, internal_ip, 0, external_ip, 0): (icmp_id, timestamp)}
+    # (reuses the same 5-tuple key shape as _connections with zero placeholders)
     _icmp_connections = {}
 
     # Next available NAT port for TCP/UDP (ephemeral range)
@@ -207,6 +208,7 @@ class NAT:
             conn_key = (proto, old_src_ip, old_src_port, dst_ip, tcp_hdr.dst_port)
             if conn_key in cls._connections:
                 new_src_port = cls._connections[conn_key]["nat_port"]
+                cls._connections[conn_key]["timestamp"] = time.time()
             else:
                 new_src_port = cls._get_nat_port()
                 cls._connections[conn_key] = {
@@ -219,6 +221,7 @@ class NAT:
             conn_key = (proto, old_src_ip, old_src_port, dst_ip, udp_hdr.dst_port)
             if conn_key in cls._connections:
                 new_src_port = cls._connections[conn_key]["nat_port"]
+                cls._connections[conn_key]["timestamp"] = time.time()
             else:
                 new_src_port = cls._get_nat_port()
                 cls._connections[conn_key] = {
@@ -276,33 +279,40 @@ class NAT:
             has_ports = True
             dst_port = tcp_hdr.dst_port
             src_port = tcp_hdr.src_port
-            for (p, oip, oport, eip, eport), info in cls._connections.items():
+            for conn_key, info in cls._connections.items():
+                (p, oip, oport, eip, eport) = conn_key
                 if (info["nat_port"] == dst_port and p == proto
                         and eip == src_ip and eport == src_port):
                     original_ip = oip
                     original_port = oport
                     original_src_port = eport
+                    info["timestamp"] = time.time()
                     break
         elif udp_hdr:
             has_ports = True
             dst_port = udp_hdr.dst_port
             src_port = udp_hdr.src_port
-            for (p, oip, oport, eip, eport), info in cls._connections.items():
+            for conn_key, info in cls._connections.items():
+                (p, oip, oport, eip, eport) = conn_key
                 if (info["nat_port"] == dst_port and p == proto
                         and eip == src_ip and eport == src_port):
                     original_ip = oip
                     original_port = oport
                     original_src_port = eport
+                    info["timestamp"] = time.time()
                     break
         else:
             for (p, oip, oport, eip, eport), info in cls._connections.items():
                 if eip == src_ip and p == proto:
                     original_ip = oip
+                    info["timestamp"] = time.time()
                     break
             if not original_ip:
-                for (p, oip, oport, eip, eport), (_, ts) in cls._icmp_connections.items():
+                for conn_key, (icmp_id, ts) in cls._icmp_connections.items():
+                    (p, oip, oport, eip, eport) = conn_key
                     if eip == src_ip:
                         original_ip = oip
+                        cls._icmp_connections[conn_key] = (icmp_id, time.time())
                         break
 
         if not original_ip:

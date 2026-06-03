@@ -124,6 +124,10 @@ class DNSServer:
         if qr != 0:
             return None
 
+        # Only support single-question queries
+        if qdcount != 1:
+            return None
+
         pos = 12
         qname_labels = []
         qname_raw_start = pos

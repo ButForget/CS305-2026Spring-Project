@@ -226,12 +226,12 @@ class ControllerApp(app_manager.OSKenApp):
 
             # --- NAT handling ---
             if pkt_ipv4 and NAT.needs_nat(pkt_ipv4.src, pkt_ipv4.dst):
-                nat_port, nat_data = NAT.handle_nat(
+                out_port, nat_data = NAT.handle_nat(
                     datapath, in_port, pkt, self.hosts, self.arp_table,
                     self.controller_mac
                 )
                 if nat_data:
-                    self._send_raw_packet(datapath, nat_port, nat_data)
+                    self._send_raw_packet(datapath, out_port, nat_data)
                     return
 
             # Forward to destination if location is known

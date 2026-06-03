@@ -35,7 +35,7 @@ connection-tracking table for reverse translation.
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `_connections` | `dict` | TCP/UDP connection tracking: `{(proto, int_ip, int_port, ext_ip, ext_port): {"nat_port": N, "timestamp": T}}` |
-| `_icmp_connections` | `dict` | ICMP connection tracking: `{(proto, int_ip, icmp_id, ext_ip): (nat_icmp_id, timestamp)}` |
+| `_icmp_connections` | `dict` | ICMP connection tracking: `{(proto, int_ip, 0, ext_ip, 0): (icmp_id, timestamp)}` (reuses the 5-tuple key shape with zero placeholders) |
 
 ---
 
