@@ -7,15 +7,9 @@ from os_ken.lib.packet import dhcp
 from os_ken.ofproto import ether
 from os_ken.ofproto import inet
 import collections
-import logging
 import socket
 import struct
 import time
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-if not logger.handlers:
-    logger.addHandler(logging.StreamHandler())
 
 if not hasattr(dhcp, 'DHCP_RELEASE'):
     dhcp.DHCP_RELEASE = 7
@@ -152,40 +146,30 @@ class DHCPServer():
         val = msg_type_opts[0].value
         msg_type = val[0] if isinstance(val, bytes) else ord(val)
 
-        client_mac = dhcp_obj.chaddr
-        M = {1: 'DISCOVER', 3: 'REQUEST', 7: 'RELEASE'}
-        logger.info(f"[DHCP] {M.get(msg_type, msg_type)} mac={client_mac} port={port} "
-                     f"xid={dhcp_obj.xid} pool={list(cls._ip_pool) if cls._ip_pool else '[]'} "
-                     f"offered={dict(cls._offered)} leases={dict(cls._leases)}")
-
         if msg_type == dhcp.DHCP_DISCOVER:
             offered_ip = cls._select_ip(dhcp_obj.chaddr, dhcp_obj.xid)
-            logger.info(f"[DHCP] DISCOVER from {client_mac} -> OFFER {offered_ip}")
             if offered_ip:
                 offer = cls.assemble_offer(pkt, datapath, offered_ip)
                 cls._send_packet(datapath, port, offer)
 
         elif msg_type == dhcp.DHCP_REQUEST:
+            client_mac = dhcp_obj.chaddr
             req_ip_opts = [opt for opt in dhcp_obj.options.option_list
                            if opt.tag == dhcp.DHCP_REQUESTED_IP_ADDR_OPT]
             if req_ip_opts:
                 requested_ip = addrconv.ipv4.bin_to_text(req_ip_opts[0].value)
             else:
                 if dhcp_obj.ciaddr == '0.0.0.0':
-                    logger.info(f"[DHCP] REQUEST from {client_mac} NO req_ip and ciaddr=0.0.0.0 -> return")
                     return
                 requested_ip = dhcp_obj.ciaddr
-            logger.info(f"[DHCP] REQUEST mac={client_mac} req_ip={requested_ip} ciaddr={dhcp_obj.ciaddr}")
             if cls._is_ip_available(requested_ip, client_mac):
                 if not cls._is_pool_ip(requested_ip):
-                    logger.info(f"[DHCP] REQUEST ip {requested_ip} not in pool -> NAK")
                     nak = cls.assemble_nak(pkt, datapath)
                     cls._send_packet(datapath, port, nak)
                     return
                 if requested_ip in cls._offered:
                     offered_mac = cls._offered[requested_ip][0]
                     if offered_mac != client_mac:
-                        logger.info(f"[DHCP] REQUEST ip {requested_ip} offered to {offered_mac} != {client_mac} -> NAK")
                         nak = cls.assemble_nak(pkt, datapath)
                         cls._send_packet(datapath, port, nak)
                         return
@@ -208,17 +192,15 @@ class DHCPServer():
                     'lease_time': Config.lease_time
                 }
                 cls._mac_bindings[client_mac] = requested_ip
-                logger.info(f"[DHCP] ACK mac={client_mac} ip={requested_ip} renewal={is_renewal} -> sending ACK")
                 ack = cls.assemble_ack(pkt, datapath, port, is_renewal=is_renewal)
                 cls._send_packet(datapath, port, ack)
             else:
-                logger.info(f"[DHCP] REQUEST ip {requested_ip} NOT available for {client_mac} -> NAK")
                 nak = cls.assemble_nak(pkt, datapath)
                 cls._send_packet(datapath, port, nak)
 
         elif msg_type == dhcp.DHCP_RELEASE:
+            client_mac = dhcp_obj.chaddr
             ciaddr = dhcp_obj.ciaddr
-            logger.info(f"[DHCP] RELEASE mac={client_mac} ip={ciaddr}")
             if client_mac in cls._mac_bindings and cls._mac_bindings[client_mac] == ciaddr:
                 cls._release_ip(ciaddr)
 
