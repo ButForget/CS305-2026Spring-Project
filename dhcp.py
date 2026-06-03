@@ -11,12 +11,17 @@ import socket
 import struct
 import time
 
+if not hasattr(dhcp, 'DHCP_RELEASE'):
+    dhcp.DHCP_RELEASE = 7
+if not hasattr(dhcp, 'DHCP_NAK'):
+    dhcp.DHCP_NAK = 6
+
 
 class Config():
     controller_macAddr = '7e:49:b3:f0:f9:99'
     dns = '8.8.8.8'
     start_ip = '192.168.1.2'
-    end_ip = '192.168.1.100'
+    end_ip = '192.168.1.4'
     netmask = '255.255.255.0'
     lease_time = 86400
     server_ip = '192.168.1.1'
@@ -175,13 +180,15 @@ class DHCPServer():
                     old_ip = cls._mac_bindings[client_mac]
                     if old_ip != requested_ip:
                         cls._release_ip(old_ip)
+                is_renewal = requested_ip in cls._leases and \
+                    cls._leases[requested_ip].get('mac') == client_mac
                 cls._leases[requested_ip] = {
                     'mac': client_mac,
                     'start_time': time.time(),
                     'lease_time': Config.lease_time
                 }
                 cls._mac_bindings[client_mac] = requested_ip
-                ack = cls.assemble_ack(pkt, datapath, port)
+                ack = cls.assemble_ack(pkt, datapath, port, is_renewal=is_renewal)
                 cls._send_packet(datapath, port, ack)
             else:
                 nak = cls.assemble_nak(pkt, datapath)
@@ -189,8 +196,9 @@ class DHCPServer():
 
         elif msg_type == dhcp.DHCP_RELEASE:
             client_mac = dhcp_obj.chaddr
-            if client_mac in cls._mac_bindings:
-                cls._release_ip(cls._mac_bindings[client_mac])
+            ciaddr = dhcp_obj.ciaddr
+            if client_mac in cls._mac_bindings and cls._mac_bindings[client_mac] == ciaddr:
+                cls._release_ip(ciaddr)
 
     @classmethod
     def assemble_offer(cls, pkt, datapath, offered_ip):
@@ -237,7 +245,7 @@ class DHCPServer():
         return pkt_out
 
     @classmethod
-    def assemble_ack(cls, pkt, datapath, port):
+    def assemble_ack(cls, pkt, datapath, port, is_renewal=False):
         dhcp_obj = pkt.get_protocols(dhcp.dhcp)[0]
         client_mac = dhcp_obj.chaddr
         xid = dhcp_obj.xid
@@ -266,13 +274,16 @@ class DHCPServer():
                                         value=addrconv.ipv4.text_to_bin(Config.server_ip)))
         options = dhcp.options(option_list=option_list)
 
+        eth_dst = client_mac if is_renewal else 'ff:ff:ff:ff:ff:ff'
+        ip_dst = ack_ip if is_renewal else '255.255.255.255'
+
         pkt_out = packet.Packet()
         pkt_out.add_protocol(ethernet.ethernet(
-            dst='ff:ff:ff:ff:ff:ff',
+            dst=eth_dst,
             src=Config.controller_macAddr,
             ethertype=ether.ETH_TYPE_IP))
         pkt_out.add_protocol(ipv4.ipv4(
-            dst='255.255.255.255',
+            dst=ip_dst,
             src=Config.server_ip,
             proto=inet.IPPROTO_UDP))
         pkt_out.add_protocol(udp.udp(

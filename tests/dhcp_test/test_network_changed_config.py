@@ -37,6 +37,13 @@ def _ip_in_pool(ip):
         return False
 
 
+def _pool_size():
+    try:
+        return _ip_to_int(Config.end_ip) - _ip_to_int(Config.start_ip) + 1
+    except Exception:
+        return 0
+
+
 def disable_ipv6(node):
     node.cmd("sysctl -w net.ipv6.conf.all.disable_ipv6=1")
     node.cmd("sysctl -w net.ipv6.conf.default.disable_ipv6=1")
@@ -45,6 +52,15 @@ def disable_ipv6(node):
 
 def dhclient(node, timeout_s=15):
     return node.cmd("timeout %s dhclient -v %s-eth0 2>&1" % (timeout_s, node.name))
+
+
+def wait_for_ip(node, timeout_s=10):
+    for _ in range(int(timeout_s * 2)):
+        ip = node.defaultIntf().updateIP()
+        if ip:
+            return ip
+        time.sleep(0.5)
+    return None
 
 
 class ChangedConfigTopo(Topo):
@@ -58,6 +74,10 @@ class ChangedConfigTopo(Topo):
 
 
 def run_test():
+    pool_n = _pool_size()
+    host_count = min(3, max(1, pool_n))
+    skip_uniqueness = pool_n < 2
+
     print()
     print("=" * 62)
     print("  TC2: Changed DHCP Config")
@@ -67,10 +87,21 @@ def run_test():
     print(f"    end_ip    = {Config.end_ip}")
     print(f"    netmask   = {Config.netmask}")
     print(f"    IP range  = {Config.start_ip} - {Config.end_ip}")
+    print(f"    Pool size = {pool_n} IPs")
+    if pool_n < 3:
+        print(f"  NOTE: Pool has only {pool_n} IPs; testing with {host_count} hosts.")
+    if skip_uniqueness:
+        print(f"  NOTE: Single-IP pool — skipping uniqueness check.")
+    print("=" * 62)
+    print("  !! IMPORTANT: Restart osken-manager after editing dhcp.py Config.")
+    print("  !! If controller was not restarted, results below are INVALID.")
     print("=" * 62)
 
+    from mininet.clean import cleanup
+    cleanup()
+
     net = Mininet(
-        topo=ChangedConfigTopo(host_count=3),
+        topo=ChangedConfigTopo(host_count=host_count),
         autoSetMacs=True,
         controller=RemoteController,
     )
@@ -92,9 +123,7 @@ def run_test():
         ips = {}
         for h in hosts:
             dhclient(h)
-            time.sleep(1)
-
-        time.sleep(2)
+            wait_for_ip(h)
 
         for h in hosts:
             ip = h.defaultIntf().updateIP()
@@ -106,12 +135,13 @@ def run_test():
                 print(f"  [FAIL] {h.name} IP = {ip}  (NOT in pool or no IP)")
                 all_pass = False
 
-        ip_list = [v for v in ips.values() if v]
-        if len(set(ip_list)) == len(ip_list):
-            print(f"  [PASS] All {len(ip_list)} hosts have unique IPs")
-        else:
-            print(f"  [FAIL] Duplicate IPs detected: {ip_list}")
-            all_pass = False
+        if not skip_uniqueness:
+            ip_list = [v for v in ips.values() if v]
+            if len(set(ip_list)) == len(ip_list):
+                print(f"  [PASS] All {len(ip_list)} hosts have unique IPs")
+            else:
+                print(f"  [FAIL] Duplicate IPs detected: {ip_list}")
+                all_pass = False
 
     finally:
         net.stop()
