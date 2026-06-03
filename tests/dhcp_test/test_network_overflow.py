@@ -1,5 +1,5 @@
 """
-TC3: DHCP Overflow — more hosts than available IPs
+TC4: DHCP Overflow — more hosts than available IPs
 ---------------------------------------------------
 Creates m hosts where m > n (number of IPs in pool).
 Verifies: first n hosts receive valid IPs from the pool,
@@ -83,7 +83,7 @@ def run_test():
 
     print()
     print("=" * 62)
-    print("  TC3: DHCP Overflow — more hosts than IPs")
+    print("  TC4: DHCP Overflow — more hosts than IPs")
     print("=" * 62)
     print(f"  Pool range : {Config.start_ip} - {Config.end_ip}")
     print(f"  Pool size (n) : {pool_n} IPs")

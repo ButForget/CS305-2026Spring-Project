@@ -148,7 +148,7 @@ def demo_tc1_basic(net):
 
 
 def demo_tc4_release(net):
-    """TC4 (Bonus): DHCP RELEASE — IP reclamation with exhaustion proof."""
+    """TC2 (Bonus): DHCP RELEASE — IP reclamation with exhaustion proof."""
     hosts = sorted(net.hosts, key=lambda h: h.name)
     h1 = hosts[0]
     h2 = hosts[1]
@@ -216,17 +216,17 @@ def demo_tc4_release(net):
     ip3 = h3.defaultIntf().updateIP() if h3 else None
 
     if not (ip1 and _ip_in_pool(ip1)):
-        record("TC4 init: h1 failed to get IP", False, f"IP={ip1}")
+        record("TC2 init: h1 failed to get IP", False, f"IP={ip1}")
         return False
     if not (ip2 and _ip_in_pool(ip2)):
-        record("TC4 init: h2 failed to get IP", False, f"IP={ip2}")
+        record("TC2 init: h2 failed to get IP", False, f"IP={ip2}")
         return False
     if h3 and not (ip3 and _ip_in_pool(ip3)):
-        record("TC4 init: h3 failed to get IP", False, f"IP={ip3}")
+        record("TC2 init: h3 failed to get IP", False, f"IP={ip3}")
         return False
 
     unique_init = len(set(i for i in [ip1, ip2, ip3] if i)) == (3 if h3 else 2)
-    record("TC4: pool exhausted — h1=%s, h2=%s%s" % (
+    record("TC2: pool exhausted — h1=%s, h2=%s%s" % (
         ip1, ip2, ", h3=%s" % ip3 if h3 else ""), unique_init)
     if not unique_init:
         return False
@@ -258,12 +258,12 @@ def demo_tc4_release(net):
     if ip_spare and _ip_in_pool(ip_spare):
         reclaimed = (ip_spare == ip1)
         if reclaimed:
-            record("TC4: %s reclaimed h1's released IP %s" % (spare_name, ip1), True)
+            record("TC2: %s reclaimed h1's released IP %s" % (spare_name, ip1), True)
         else:
-            record("TC4: %s got IP %s (released IP was %s, release still plausible)"
+            record("TC2: %s got IP %s (released IP was %s, release still plausible)"
                    % (spare_name, ip_spare, ip1), True)
     else:
-        record("TC4: %s failed to get IP after release" % spare_name, False)
+        record("TC2: %s failed to get IP after release" % spare_name, False)
         return False
 
     # Step 4: h1 re-requests
@@ -272,16 +272,16 @@ def demo_tc4_release(net):
     wait_for_ip(h1)
     ip1_new = h1.defaultIntf().updateIP()
     if ip1_new and _ip_in_pool(ip1_new):
-        record("TC4: h1 re-request succeeded, IP=%s" % ip1_new, True)
+        record("TC2: h1 re-request succeeded, IP=%s" % ip1_new, True)
     else:
-        record("TC4: h1 re-request failed after release", False)
+        record("TC2: h1 re-request failed after release", False)
         all_pass = False
 
     return all_pass
 
 
 def demo_tc5_duplicate(net):
-    """TC5 (Bonus): h2 steals h1's IP → server NAKs, h2 gets different IP."""
+    """TC3 (Bonus): h2 steals h1's IP → server NAKs, h2 gets different IP."""
     h1 = net.get("h1")
     h2 = net.get("h2")
 
@@ -365,12 +365,12 @@ def run_mininet():
 
     reset_hosts(net)
 
-    section("TC4 (Bonus): DHCP RELEASE — IP reclamation")
+    section("TC2 (Bonus): DHCP RELEASE — IP reclamation")
     demo_tc4_release(net)
 
     reset_hosts(net)
 
-    section("TC5 (Bonus): Duplicate IP — NAK rejection")
+    section("TC3 (Bonus): Duplicate IP — NAK rejection")
     demo_tc5_duplicate(net)
 
     section("")
