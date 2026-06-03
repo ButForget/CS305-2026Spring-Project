@@ -33,7 +33,7 @@ class Firewall:
         "udp": inet.IPPROTO_UDP,   # 17
     }
 
-    def __init__(self, rule_file="firewall_rules.json"):
+    def __init__(self, rule_file="firewall_rules_disconnect.json"):
         # Ensure we always find the rules file relative to this script
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.rule_file = os.path.join(base_dir, rule_file)

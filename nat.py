@@ -117,10 +117,11 @@ class NAT:
             del cls._icmp_connections[k]
 
     @classmethod
-    def handle_nat(cls, datapath, in_port, pkt, hosts, arp_table, controller_mac):
+    def handle_nat(cls, datapath, in_port, pkt, hosts, arp_table, controller_mac,
+                   raw_data=None):
         """
         Process a packet that needs NAT translation.
-        Returns (out_port, raw_packet_bytes) or (None, None).
+        Returns (out_dpid, out_port, raw_packet_bytes) or (None, None, None).
 
         Args:
             datapath: switch datapath
@@ -129,6 +130,7 @@ class NAT:
             hosts: {mac: (dpid, port, ip)} host location dict
             arp_table: {ip: mac} mapping
             controller_mac: controller's MAC address
+            raw_data: original raw packet bytes (preferred over pkt.serialize())
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -137,7 +139,7 @@ class NAT:
         ip_hdr = pkt.get_protocol(ipv4.ipv4)
 
         if not eth or not ip_hdr:
-            return None, None
+            return None, None, None
 
         src_ip = ip_hdr.src
         dst_ip = ip_hdr.dst
@@ -148,52 +150,70 @@ class NAT:
         # --- Outbound: Internal → External (SNAT) ---
         if cls.is_internal(src_ip) and cls.is_external(dst_ip):
             return cls._handle_snat(datapath, in_port, pkt, eth, ip_hdr,
-                                    hosts, arp_table, controller_mac, logger)
+                                    hosts, arp_table, controller_mac, logger,
+                                    raw_data=raw_data)
 
-        # --- Inbound: External → Internal (DNAT) ---
-        if cls.is_external(src_ip) and (cls.is_internal(dst_ip) or dst_ip == cls.NAT_EXTERNAL_IP):
+        # --- Inbound to NAT IP: External → NAT_IP (DNAT) ---
+        if cls.is_external(src_ip) and dst_ip == cls.NAT_EXTERNAL_IP:
             return cls._handle_dnat(datapath, in_port, pkt, eth, ip_hdr,
-                                    hosts, arp_table, controller_mac, logger)
+                                    hosts, arp_table, controller_mac, logger,
+                                    raw_data=raw_data)
 
-        # --- Inbound to NAT IP (fallback) ---
-        if dst_ip == cls.NAT_EXTERNAL_IP:
-            return cls._handle_dnat(datapath, in_port, pkt, eth, ip_hdr,
-                                    hosts, arp_table, controller_mac, logger)
+        # --- Direct External → Internal (no NAT, just forward) ---
+        if cls.is_external(src_ip) and cls.is_internal(dst_ip):
+            if raw_data is not None:
+                raw = bytearray(raw_data)
+            else:
+                pkt.serialize()
+                raw = bytearray(pkt.data)
+            dst_mac = arp_table.get(dst_ip)
+            out_dpid, out_port = cls._find_host_port(dst_ip, hosts, arp_table)
+            if not dst_mac or out_port is None:
+                logger.debug("Direct fwd: cannot find %s", dst_ip)
+                return None, None, None
+            raw = cls._rewrite_eth_macs(raw, controller_mac, dst_mac)
+            logger.info("Direct fwd: %s -> %s (out_port=%d)", src_ip, dst_ip, out_port)
+            return out_dpid, out_port, bytes(raw)
 
-        return None, None
+        return None, None, None
 
     @classmethod
     def _find_host_port(cls, ip, hosts, arp_table):
-        """Find the output port for a given destination IP."""
+        """Find the (dpid, port) for a given destination IP."""
         if ip in arp_table:
             mac = arp_table[ip]
             if mac in hosts:
-                _, port, _ = hosts[mac]
-                return port
-        return None
+                dpid, port, _ = hosts[mac]
+                return dpid, port
+        return None, None
 
     @classmethod
     def _handle_snat(cls, datapath, in_port, pkt, eth, ip_hdr,
-                     hosts, arp_table, controller_mac, logger):
+                     hosts, arp_table, controller_mac, logger,
+                     raw_data=None):
         """SNAT: rewrite src IP to NAT_EXTERNAL_IP and adjust MACs."""
-        pkt.serialize()
-        raw = bytearray(pkt.data)
+        # Use original raw packet data when available (preserves TCP options etc.)
+        if raw_data is not None:
+            raw = bytearray(raw_data)
+        else:
+            pkt.serialize()
+            raw = bytearray(pkt.data)
 
         old_src_ip = ip_hdr.src
         new_src_ip = cls.NAT_EXTERNAL_IP
         dst_ip = ip_hdr.dst
 
         # Find output port for destination
-        out_port = cls._find_host_port(dst_ip, hosts, arp_table)
+        out_dpid, out_port = cls._find_host_port(dst_ip, hosts, arp_table)
         if out_port is None:
             logger.debug("SNAT: cannot find output port for %s", dst_ip)
-            return None, None
+            return None, None, None
 
         # Get destination MAC
         dst_mac = arp_table.get(dst_ip, None)
         if not dst_mac:
             logger.debug("SNAT: cannot find MAC for %s", dst_ip)
-            return None, None
+            return None, None, None
 
         proto = ip_hdr.proto
         old_src_port = 0
@@ -263,14 +283,19 @@ class NAT:
                      old_src_ip, old_src_port, new_src_ip, new_src_port,
                      dst_ip, tcp_hdr.dst_port if tcp_hdr else (udp_hdr.dst_port if udp_hdr else 0), out_port)
 
-        return out_port, bytes(raw)
+        return out_dpid, out_port, bytes(raw)
 
     @classmethod
     def _handle_dnat(cls, datapath, in_port, pkt, eth, ip_hdr,
-                     hosts, arp_table, controller_mac, logger):
+                     hosts, arp_table, controller_mac, logger,
+                     raw_data=None):
         """DNAT: rewrite dst IP back to original internal IP and adjust MACs."""
-        pkt.serialize()
-        raw = bytearray(pkt.data)
+        # Use original raw packet data when available (preserves TCP options etc.)
+        if raw_data is not None:
+            raw = bytearray(raw_data)
+        else:
+            pkt.serialize()
+            raw = bytearray(pkt.data)
 
         proto = ip_hdr.proto
         dst_ip = ip_hdr.dst
@@ -318,16 +343,26 @@ class NAT:
                     info["timestamp"] = time.time()
                     break
             if not original_ip:
+                # Extract ICMP identifier from reply for per-flow matching
+                reply_icmp_id = 0
+                try:
+                    ip_start = 14
+                    ip_hdr_len = (raw[ip_start] & 0x0F) * 4
+                    icmp_start = ip_start + ip_hdr_len
+                    if icmp_start + 6 <= len(raw):
+                        reply_icmp_id = struct.unpack("!H", raw[icmp_start + 4:icmp_start + 6])[0]
+                except Exception:
+                    pass
                 for conn_key, (icmp_id, ts) in cls._icmp_connections.items():
                     (p, oip, oport, eip, eport) = conn_key
-                    if eip == src_ip and p == proto:
+                    if eip == src_ip and p == proto and icmp_id == reply_icmp_id:
                         original_ip = oip
                         cls._icmp_connections[conn_key] = (icmp_id, time.time())
                         break
 
         if not original_ip:
             logger.debug("DNAT: no connection found for dst=%s src=%s", dst_ip, src_ip)
-            return None, None
+            return None, None, None
 
         # Rewrite destination IP FIRST
         raw = cls._rewrite_ip_dst(raw, dst_ip, original_ip)
@@ -346,20 +381,20 @@ class NAT:
         original_mac = arp_table.get(original_ip, None)
         if not original_mac:
             logger.debug("DNAT: cannot find MAC for original IP %s", original_ip)
-            return None, None
+            return None, None, None
 
         raw = cls._rewrite_eth_macs(raw, controller_mac, original_mac)
 
         # Find output port for original host
-        out_port = cls._find_host_port(original_ip, hosts, arp_table)
+        out_dpid, out_port = cls._find_host_port(original_ip, hosts, arp_table)
         if out_port is None:
             logger.debug("DNAT: cannot find output port for %s", original_ip)
-            return None, None
+            return None, None, None
 
         logger.info("DNAT: %s -> %s (from %s, out_port=%d)",
                      dst_ip, original_ip, src_ip, out_port)
 
-        return out_port, bytes(raw)
+        return out_dpid, out_port, bytes(raw)
 
     # ------------------------------------------------------------------
     # Raw packet rewriting helpers

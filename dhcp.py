@@ -10,13 +10,16 @@ import collections
 import socket
 import struct
 import time
-
+if not hasattr(dhcp, 'DHCP_RELEASE'):
+    dhcp.DHCP_RELEASE = 7
+if not hasattr(dhcp, 'DHCP_NAK'):
+    dhcp.DHCP_NAK = 6
 
 class Config():
     controller_macAddr = '7e:49:b3:f0:f9:99'
     dns = '8.8.8.8'
-    start_ip = '192.168.1.2'
-    end_ip = '192.168.1.100'
+    start_ip = '10.0.0.10'
+    end_ip = '10.0.0.13'
     netmask = '255.255.255.0'
     lease_time = 86400
     server_ip = '192.168.1.1'

@@ -229,12 +229,12 @@ class ControllerApp(app_manager.OSKenApp):
 
             # --- NAT handling ---
             if pkt_ipv4 and NAT.needs_nat(pkt_ipv4.src, pkt_ipv4.dst):
-                out_port, nat_data = NAT.handle_nat(
+                out_dpid, out_port, nat_data = NAT.handle_nat(
                     datapath, in_port, pkt, self.hosts, self.arp_table,
-                    self.controller_mac
+                    self.controller_mac, raw_data=msg.data
                 )
-                if nat_data:
-                    self._send_raw_packet(datapath, out_port, nat_data)
+                if nat_data and out_dpid in self.datapaths:
+                    self._send_raw_packet(self.datapaths[out_dpid], out_port, nat_data)
                 return  # NAT-eligible packets: handled or dropped (no flooding)
 
             # Forward to destination if location is known

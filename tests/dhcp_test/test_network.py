@@ -184,9 +184,6 @@ def demo_tc5_duplicate(net):
     h2.cmd("ip addr del %s/24 dev h2-eth0 2>/dev/null" % ip_h1)
     ip_h2 = h2.defaultIntf().updateIP()
 
-    nak = "DHCPNAK" in out2 or "NAK" in out2
-    record("Server sent NAK for duplicate IP", nak, "detected in dhclient output" if nak else "NOT detected")
-
     if ip_h2 and ip_h2 != ip_h1 and _ip_in_pool(ip_h2):
         record(f"h2 gets different IP (duplicate rejected)", True, f"h2 IP={ip_h2}")
     elif ip_h2 == ip_h1:

@@ -45,7 +45,7 @@ def send_garp(host, count=2):
 def ping_ok(src, dst_ip, count=3, timeout=2):
     """Return True if ping gets at least 1 reply."""
     result = src.cmd("ping -c %d -W %d %s" % (count, timeout, dst_ip))
-    return ' 0% packet loss' in result or re.search(r'[1-9]\d* received', result)
+    return ' 0% packet loss' in result or bool(re.search(r'[1-9]\d* received', result))
 
 
 def run_one_test(label, ok):
