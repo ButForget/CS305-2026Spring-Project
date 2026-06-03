@@ -96,6 +96,10 @@ def run_mininet():
     # Flow table on s1
     # print(s1.cmd('ovs-ofctl -O OpenFlow10 dump-flows s1'))
 
+    # Ping all hosts to show firewall filtering effect
+    print('\n===== Ping All Test (expect h1->h2 blocked) =====')
+    net.pingAll()
+
     CLI(net)
 
     h2.cmd('pkill -f "python3 -m http.server" || true')
