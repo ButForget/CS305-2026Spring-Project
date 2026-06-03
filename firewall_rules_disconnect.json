@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "_comment": "Block h1(10.0.0.1) <-> h3(10.0.0.3) ICMP. They are on s1 and s2, with multiple redundant paths (s1-s2 direct, s1-s4-s5-s2, s1-s5-s2). Firewall rules are installed on ALL switches, so even with redundant paths, these hosts become unreachable.",
+      "src_ip": "10.0.0.1",
+      "dst_ip": "10.0.0.3",
+      "proto": "icmp",
+      "src_port": "*",
+      "dst_port": "*",
+      "action": "deny"
+    },
+    {
+      "_comment": "Reverse direction: h3 -> h1 ICMP also blocked.",
+      "src_ip": "10.0.0.3",
+      "dst_ip": "10.0.0.1",
+      "proto": "icmp",
+      "src_port": "*",
+      "dst_port": "*",
+      "action": "deny"
+    },
+    {
+      "_comment": "Block h5(10.0.0.5) <-> h8(10.0.0.8) ICMP. They are on s4 and s6, with multiple paths (s4-s5-s6, s4-s1-s2-s3-s6, s4-s1-s5-s6, etc.). Again, firewall rules override any path redundancy.",
+      "src_ip": "10.0.0.5",
+      "dst_ip": "10.0.0.8",
+      "proto": "icmp",
+      "src_port": "*",
+      "dst_port": "*",
+      "action": "deny"
+    },
+    {
+      "_comment": "Reverse direction: h8 -> h5 ICMP also blocked.",
+      "src_ip": "10.0.0.8",
+      "dst_ip": "10.0.0.5",
+      "proto": "icmp",
+      "src_port": "*",
+      "dst_port": "*",
+      "action": "deny"
+    }
+  ]
+}

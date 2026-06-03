@@ -7,6 +7,7 @@ Verifies: first n hosts receive valid IPs from the pool,
 
 Host count is computed dynamically from the pool size to always overflow.
 """
+
 import os
 import struct
 import socket
@@ -18,12 +19,15 @@ from mininet.net import Mininet
 from mininet.node import RemoteController
 from mininet.topo import Topo
 
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 sys.path.insert(0, _project_root)
 try:
     from dhcp import Config
 except ImportError:
     Config = None
+
 
 def _ip_to_int(ip):
     return struct.unpack("!I", socket.inet_aton(ip))[0]
@@ -76,6 +80,7 @@ def run_test():
         return False
 
     from mininet.clean import cleanup
+
     cleanup()
 
     pool_n = _pool_size()
@@ -107,7 +112,9 @@ def run_test():
         time.sleep(3)
 
         for h in net.hosts:
-            h.cmd("rm -f /var/lib/dhcp/dhclient*leases /var/lib/dhclient/dhclient*leases /var/lib/NetworkManager/dhclient*leases 2>/dev/null")
+            h.cmd(
+                "rm -f /var/lib/dhcp/dhclient*leases /var/lib/dhclient/dhclient*leases /var/lib/NetworkManager/dhclient*leases 2>/dev/null"
+            )
 
         hosts = sorted(net.hosts, key=lambda h: int(h.name[1:]))
         results = []
@@ -140,9 +147,13 @@ def run_test():
         ip_list = [ip for _, ip in results if ip and _ip_in_pool(ip)]
         unique_ips = len(set(ip_list))
         if unique_ips == pool_n:
-            print(f"  [PASS] Pool fully utilized: {unique_ips}/{pool_n} unique IPs assigned")
+            print(
+                f"  [PASS] Pool fully utilized: {unique_ips}/{pool_n} unique IPs assigned"
+            )
         else:
-            print(f"  [WARN] {unique_ips}/{pool_n} unique IPs assigned — may indicate IP leak")
+            print(
+                f"  [WARN] {unique_ips}/{pool_n} unique IPs assigned — may indicate IP leak"
+            )
 
     finally:
         net.stop()
