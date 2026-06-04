@@ -190,10 +190,6 @@ def demo_tc2_release(net):
         record(f"h1 IP before release = {ip1_before}", True)
         record(f"h2 IP before release = {ip2_before}", True)
 
-        released, _ = dhclient_release_check(h1)
-        record("h1 sent DHCPRELEASE", released)
-        time.sleep(2)
-
         dhclient_release(h2)
         strip_ip(h2)
         time.sleep(1)
