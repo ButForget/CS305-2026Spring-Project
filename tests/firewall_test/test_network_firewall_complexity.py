@@ -144,6 +144,72 @@ def ping_ok(src, dst_ip, count=3, timeout=2):
     return False
 
 
+def batch_ping(pairs, count=3, timeout=2):
+    """Run multiple pings in parallel across hosts.
+
+    Launches all pings concurrently using shell background jobs (&) so that
+    every host can ping all its targets simultaneously.  Results are written
+    to temporary files under /tmp/ping_batch/ and parsed afterwards.
+
+    Args:
+        pairs: list of (src_host, dst_host) tuples.
+        count: number of ICMP echo requests per ping.
+        timeout: per-packet timeout in seconds.
+
+    Returns:
+        dict mapping (src_name, dst_name) -> bool (True if reachable).
+    """
+    import shutil
+
+    tmpdir = "/tmp/ping_batch_%d" % int(time.time() * 1000)
+
+    # Group destinations by source host
+    by_src = {}
+    for src, dst in pairs:
+        by_src.setdefault(src, []).append(dst)
+
+    # Launch all pings in parallel: one compound command per source host
+    for src, dsts in by_src.items():
+        src.cmd("mkdir -p %s" % tmpdir)
+        script_parts = []
+        for dst in dsts:
+            out = "%s/%s_%s.out" % (tmpdir, src.name, dst.name)
+            script_parts.append(
+                "(ping -c %d -W %d %s > %s 2>&1) &"
+                % (count, timeout, dst.IP(), out)
+            )
+        script_parts.append("wait")
+        src.sendCmd(" ".join(script_parts))
+
+    # Wait for every host to finish its batch
+    for src in by_src:
+        src.waitOutput(verbose=False)
+
+    # Parse temporary output files
+    results = {}
+    for src, dsts in by_src.items():
+        for dst in dsts:
+            out = "%s/%s_%s.out" % (tmpdir, src.name, dst.name)
+            try:
+                with open(out) as f:
+                    raw = f.read()
+                ok = (
+                    " 0% packet loss" in raw
+                    or bool(re.search(r'[1-9]\d* received', raw))
+                )
+            except Exception:
+                ok = False
+            results[(src.name, dst.name)] = ok
+
+    # Cleanup
+    try:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    except Exception:
+        pass
+
+    return results
+
+
 def count_firewall_flows(switch):
     """Count firewall flow entries (cookie=0x305f) on a switch."""
     raw = switch.cmd('ovs-ofctl -O OpenFlow10 dump-flows %s' % switch.name)
@@ -248,15 +314,16 @@ def run_test(mode):
     print("\n--- Test 2: Full-mesh connectivity (28 host pairs) ---")
     host_list = sorted(net.hosts, key=lambda h: h.name)
     blocked_found = []
-    ping_results = {}
 
+    # Build all directed ping pairs
+    all_pairs = []
     for i, src in enumerate(host_list):
         for dst in host_list[i + 1:]:
-            ok = ping_ok(src, dst.IP())
-            ping_results[(src.name, dst.name)] = ok
-            # Also test reverse direction explicitly
-            ok_rev = ping_ok(dst, src.IP())
-            ping_results[(dst.name, src.name)] = ok_rev
+            all_pairs.append((src, dst))
+            all_pairs.append((dst, src))
+
+    print("  Running %d pings in parallel ..." % len(all_pairs))
+    ping_results = batch_ping(all_pairs)
 
     # Analyze results
     connect_ok = 0
@@ -331,32 +398,31 @@ def run_test(mode):
         #   Path 1: s1 -> s2 (1 hop)
         #   Path 2: s1 -> s4 -> s5 -> s2 (3 hops)
         #   Path 3: s1 -> s5 -> s2 (2 hops)
-        h1 = hosts['h1']
-        h3 = hosts['h3']
-        if not ping_ok(h1, h3.IP()):
+        h1, h3 = hosts['h1'], hosts['h3']
+        h5, h8 = hosts['h5'], hosts['h8']
+        h2, h4 = hosts['h2'], hosts['h4']
+
+        t3_pairs = [(h1, h3), (h5, h8), (h2, h4)]
+        t3_results = batch_ping(t3_pairs)
+
+        # h1(s1) -> h3(s2): should be blocked despite multiple paths
+        if not t3_results[('h1', 'h3')]:
             print("  PASS: h1(s1) -> h3(s2) blocked despite multiple paths")
         else:
             print("  FAIL: h1(s1) -> h3(s2) reachable (firewall not enforced)")
             failures.append("h1->h3 should be blocked on all paths")
             passed = False
 
-        # h5(s4) and h8(s6): multiple paths exist
-        #   Path 1: s4 -> s5 -> s6 (2 hops)
-        #   Path 2: s4 -> s1 -> s2 -> s3 -> s6 (4 hops)
-        #   Path 3: s4 -> s1 -> s5 -> s6 (3 hops)
-        h5 = hosts['h5']
-        h8 = hosts['h8']
-        if not ping_ok(h5, h8.IP()):
+        # h5(s4) -> h8(s6): should be blocked despite multiple paths
+        if not t3_results[('h5', 'h8')]:
             print("  PASS: h5(s4) -> h8(s6) blocked despite multiple paths")
         else:
             print("  FAIL: h5(s4) -> h8(s6) reachable (firewall not enforced)")
             failures.append("h5->h8 should be blocked on all paths")
             passed = False
 
-        # h2(s1) and h4(s3): NOT blocked, should be reachable
-        h2 = hosts['h2']
-        h4 = hosts['h4']
-        if ping_ok(h2, h4.IP()):
+        # h2(s1) -> h4(s3): NOT blocked, should be reachable
+        if t3_results[('h2', 'h4')]:
             print("  PASS: h2(s1) -> h4(s3) reachable (not in firewall rules)")
         else:
             print("  FAIL: h2(s1) -> h4(s3) unexpectedly blocked")

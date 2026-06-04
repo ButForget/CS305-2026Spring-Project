@@ -5,21 +5,28 @@
 #   1. Start controller:  osken-manager --observe-links controller.py
 #   2. Run this script:   sudo env "PATH=$PATH" python test_network_dns.py
 
+import os
+import sys
 import time
 import re
 import socket
+
+_project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+sys.path.insert(0, _project_root)
 
 from mininet.cli import CLI
 from mininet.log import setLogLevel
 from mininet.net import Mininet
 from mininet.node import RemoteController
 from mininet.topo import Topo
-
+from dhcp import Config
 
 # ==========================================================================
 # Config
 # ==========================================================================
-DNS_SERVER = "10.0.0.1"
+DNS_SERVER = Config.server_ip
 
 
 # ==========================================================================

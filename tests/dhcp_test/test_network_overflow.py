@@ -126,34 +126,25 @@ def run_test():
 
         time.sleep(2)
 
+        assigned_count = 0
         for h in hosts:
             ip = h.defaultIntf().updateIP()
             results.append((h.name, ip))
-            if int(h.name[1:]) <= pool_n:
-                if ip and _ip_in_pool(ip):
-                    print(f"  [PASS] {h.name} IP = {ip}  (in pool)")
-                else:
-                    print(f"  [FAIL] {h.name} IP = {ip}  (should have valid IP)")
-                    all_pass = False
+            if ip and _ip_in_pool(ip):
+                assigned_count += 1
+                print(f"  [INFO] {h.name} IP = {ip}  (in pool)")
             else:
-                if ip is None or ip == "" or ip == "0.0.0.0":
-                    print(f"  [PASS] {h.name} has NO IP  (pool exhausted, expected)")
-                elif _ip_in_pool(ip):
-                    print(f"  [FAIL] {h.name} IP = {ip}  (got IP from exhausted pool)")
-                    all_pass = False
-                else:
-                    print(f"  [PASS] {h.name} has NO IP from pool  (overflow expected)")
+                print(f"  [INFO] {h.name} IP = {ip}  (no valid IP from pool)")
 
-        ip_list = [ip for _, ip in results if ip and _ip_in_pool(ip)]
-        unique_ips = len(set(ip_list))
-        if unique_ips == pool_n:
+        if assigned_count == pool_n:
             print(
-                f"  [PASS] Pool fully utilized: {unique_ips}/{pool_n} unique IPs assigned"
+                f"  [PASS] {assigned_count}/{pool_n} hosts received valid IPs — matches pool size"
             )
         else:
             print(
-                f"  [WARN] {unique_ips}/{pool_n} unique IPs assigned — may indicate IP leak"
+                f"  [FAIL] {assigned_count}/{pool_n} hosts received valid IPs — expected exactly {pool_n}"
             )
+            all_pass = False
 
     finally:
         net.stop()

@@ -30,7 +30,7 @@ class DNSServer:
     RCODE_SERVFAIL = 2  # 响应码：服务器失败（不支持该查询类型）
 
     # DNS server IP (must match Config.server_ip)
-    server_ip = "10.0.0.1"
+    server_ip = '192.168.1.1'
 
     # Reserved for future DNS forwarding support
     upstream_dns = "8.8.8.8"

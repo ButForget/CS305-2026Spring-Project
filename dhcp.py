@@ -21,7 +21,7 @@ class Config:
     controller_macAddr = "7e:49:b3:f0:f9:99"
     dns = "8.8.8.8"
     start_ip = "192.168.1.2"
-    end_ip = "192.168.1.4"
+    end_ip = "192.168.1.10"
     netmask = "255.255.255.0"
     lease_time = 86400
     server_ip = "192.168.1.1"
