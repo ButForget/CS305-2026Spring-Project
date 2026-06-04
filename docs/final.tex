@@ -215,9 +215,7 @@ project/
 |   |-- dhcp_test/
 |   |   |-- test_network.py         # DHCP interactive test (basic, release, duplicate)
 |   |   |-- test_network_overflow.py # DHCP overflow test (more hosts than IPs)
-|   |   |-- test_lease_expiry.py    # DHCP lease expiration test (timed expiry)
-|   |   +-- ci/
-|   |       +-- test_dhcp.py        # DHCP CI test
+|   |   +-- test_lease_expiry.py    # DHCP lease expiration test (timed expiry)
 |   |-- firewall_test/
 |   |   +-- test_network.py  # Firewall test script
 |   |-- dns_test/
@@ -975,19 +973,19 @@ A densely connected 2$\times$3 grid of six switches with additional diagonal cro
 
 \subsubsection{What It Verifies}
 
-The DHCP test suite validates that the controller's built-in DHCP server correctly allocates IP addresses to hosts, handling the complete DHCP lifecycle across both interactive and CI test files:
+The DHCP test suite validates that the controller's built-in DHCP server correctly allocates IP addresses to hosts, handling the complete DHCP lifecycle:
 
 \begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{Basic DHCP (\texttt{test\_network.py}, \texttt{test\_dhcp.py}):} Hosts broadcast a DHCP DISCOVER message and receive a valid OFFER with an IP from the configured pool. Hosts confirm the offered address via REQUEST and receive an ACK with correct lease parameters. Multiple hosts receive distinct IP addresses with no conflicts, and all allocated addresses fall within the pool range.
-    \item \textbf{DHCP RELEASE (\texttt{test\_network.py}, \texttt{test\_dhcp.py}):} (Bonus) A host releases its DHCP lease; the IP is returned to the pool and can be re-issued to another host. The interactive test uses pool exhaustion (requires a pool size $\leq$ number of hosts) to prove that a released IP is truly reclaimed.
-    \item \textbf{Duplicate IP Rejection (\texttt{test\_network.py}, \texttt{test\_dhcp.py}):} (Bonus) A host attempts to steal an IP that is already bound to another host. The server responds with DHCPNAK and either assigns a different IP or leaves the client without a valid address.
-    \item \textbf{Overflow (\texttt{test\_network\_overflow.py}):} (Bonus) Deploys more hosts than available pool addresses and verifies that the server correctly handles pool exhaustion — the last host(s) fail to obtain an IP.
-    \item \textbf{Lease Expiry (\texttt{test\_lease\_expiry.py}):} (Bonus) Validates that expired leases are automatically reclaimed. Requires manually setting a short \texttt{Config.lease\_time} (e.g., 5 seconds) and a 2-IP pool (\texttt{end\_ip="192.168.1.3"}). Uses 3 hosts: h1 and h2 exhaust the pool, h1's dhclient is killed and IP stripped, then a fresh third host (h3) fails to obtain an IP before the timeout but succeeds afterward — proving the lease expired and was reclaimed.
+    \item \textbf{Basic DHCP (\texttt{test\_network.py}):} Hosts broadcast a DHCP DISCOVER message and receive a valid OFFER with an IP from the configured pool. Hosts confirm the offered address via REQUEST and receive an ACK with correct lease parameters. Multiple hosts receive distinct IP addresses with no conflicts, and all allocated addresses fall within the pool range.
+    \item \textbf{DHCP RELEASE (\texttt{test\_network.py}):} (Bonus) A host releases its DHCP lease; the IP is returned to the pool and can be re-issued to another host. The test uses pool exhaustion to prove that a released IP is truly reclaimed.
+    \item \textbf{Duplicate IP Rejection (\texttt{test\_network.py}):} (Bonus) A host attempts to steal an IP that is already bound to another host. The server responds with DHCPNAK and either assigns a different IP or leaves the client without a valid address.
+    \item \textbf{Overflow (\texttt{test\_network\_overflow.py}):} (Bonus) Deploys more hosts than available pool addresses and verifies that the server correctly handles pool exhaustion --- the last host(s) fail to obtain an IP.
+    \item \textbf{Lease Expiry (\texttt{test\_lease\_expiry.py}):} (Bonus) Validates that expired leases are automatically reclaimed. Requires manually setting a short \texttt{Config.lease\_time} (e.g., 5 seconds) and a 2-IP pool (\texttt{end\_ip="192.168.1.3"}). Uses 3 hosts: h1 and h2 exhaust the pool, h1's dhclient is killed and IP stripped, then a fresh third host (h3) fails to obtain an IP before the timeout but succeeds afterward --- proving the lease expired and was reclaimed.
 \end{itemize}
 
 \subsubsection{Test Topology}
 
-The interactive test uses a single-switch topology with 3 hosts (to enable pool exhaustion in the release test when the pool is small). The CI test uses a single-switch topology with 2 hosts.
+The interactive test uses a single-switch topology with 3 hosts (to enable pool exhaustion in the release test when the pool is small).
 
 \begin{figure}[H]
 \centering
@@ -1016,9 +1014,9 @@ The interactive test uses a single-switch topology with 3 hosts (to enable pool 
 \toprule
 \textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
 \midrule
-\texttt{test\_basic\_dhcp} & Two hosts each get a valid, unique pool IP & \texttt{test\_dhcp.py} (CI), \texttt{test\_network.py} (3 hosts) \\
-\texttt{test\_dhcp\_release} & Released IP is returned to pool and re-issued & \texttt{test\_dhcp.py} (CI), \texttt{test\_network.py} \\
-\texttt{test\_duplicate\_ip} & Server sends NAK for stolen IP; host gets different IP or no IP & \texttt{test\_dhcp.py} (CI), \texttt{test\_network.py} \\
+\texttt{test\_basic\_dhcp} & Three hosts each get a valid, unique pool IP & \texttt{test\_network.py} \\
+\texttt{test\_dhcp\_release} & Released IP is returned to pool and re-issued & \texttt{test\_network.py} \\
+\texttt{test\_duplicate\_ip} & Server sends NAK for stolen IP; host gets different IP or no IP & \texttt{test\_network.py} \\
 \texttt{test\_overflow} & More hosts than pool IPs; excess hosts fail to get IP & \texttt{test\_network\_overflow.py} \\
 \texttt{test\_lease\_expiry} & Expired lease reclaimed after timeout; fresh host gets same IP & \texttt{test\_lease\_expiry.py} \\
 \bottomrule
