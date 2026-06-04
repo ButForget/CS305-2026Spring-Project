@@ -83,6 +83,8 @@
 {\Large\bfseries SDN Controller Project Documentation}
 
 \vspace{0.2cm}
+
+\textbf Chenyu Yang(12413306) Xinyi Zhu (12412254) Jiachen Liu(12413307)
 \end{center}
 
 
@@ -945,24 +947,38 @@ A densely connected 2$\times$3 grid of six switches with additional diagonal cro
 \end{tikzpicture}
 \caption{Heavy Mesh Topology --- 6 switches in a 2$\times$3 grid with cross-links, 8 hosts, 11 switch-to-switch links}
 \end{figure}
+\subsubsection{Test Cases}
 
-% \subsubsection{Test Cases}
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}p{4.5cm}p{5.5cm}p{3.5cm}@{}}
+\toprule
+\textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
+\midrule
+\texttt{test\_baseline\_pingall} & All host pairs ping with 0\% loss after ARP learning & \texttt{test\_network.py} \\
+\texttt{test\_flow\_table\_dump} & Flow entries printed per switch for manual inspection & \texttt{test\_network.py} \\
+\texttt{test\_link\_failure\_single} & Single link down: connectivity maintained via alternate paths & \texttt{test\_network.py} \\
+\texttt{test\_link\_failure\_double} & Double link down: connectivity maintained (mesh topologies) & \texttt{test\_network.py} \\
+\texttt{test\_link\_failure\_isolate} & All links to one switch brought down: attached hosts isolated & \texttt{test\_network.py} \\
+\texttt{test\_link\_no\_redundancy} & Link down in Line topology: expected partition & \texttt{test\_network.py} \\
+\texttt{test\_port\_modify\_down} & OpenFlow port admin-down: rerouting or isolation verified & \texttt{test\_network.py} \\
+\texttt{test\_port\_mod\_noforward} & OFPPC\_NO\_FWD blocks forwarding but not receiving & \texttt{test\_network.py} \\
+\texttt{test\_port\_mod\_noreceive} & OFPPC\_NO\_RECV blocks receiving but not forwarding & \texttt{test\_network.py} \\
+\texttt{test\_port\_modify\_combined} & Mixed port configs (down + no-forward) on multiple switches & \texttt{test\_network.py} \\
+\texttt{test\_port\_flap} & Rapid port toggle (3 cycles): controller stabilises and recovers & \texttt{test\_network.py} \\
+\texttt{test\_recovery} & All links/ports restored: full connectivity verified & \texttt{test\_network.py} \\
+\midrule
+\texttt{test\_complex\_baseline} & 28 host pairs ping with 0\% loss in HeavyMesh & \texttt{test\_network\_complex.py} \\
+\texttt{test\_complex\_link\_single} & Single link failure in HeavyMesh: connectivity maintained & \texttt{test\_network\_complex.py} \\
+\texttt{test\_complex\_link\_double} & Two simultaneous failures: still connected via cross-links & \texttt{test\_network\_complex.py} \\
+\texttt{test\_complex\_link\_triple} & Triple failure isolates one switch: hosts under it are unreachable & \texttt{test\_network\_complex.py} \\
+\texttt{test\_complex\_recovery} & All links restored: full 28-pair connectivity restored & \texttt{test\_network\_complex.py} \\
+\bottomrule
+\end{tabular}
+\caption{Switching Test Cases}
+\end{table}
 
-% \begin{table}[H]
-% \centering
-% \begin{tabular}{@{}p{4.5cm}p{5cm}p{3.5cm}@{}}
-% \toprule
-% \textbf{Test Case} & \textbf{Verification} & \textbf{Topology} \\
-% \midrule
-% \texttt{test\_pingall} & Full mesh connectivity with 0\% loss & All topologies \\
-% \texttt{test\_shortest\_path} & Path length matches expected hop count & Grid, Mesh, Diamond \\
-% \texttt{test\_link\_failure} & Connectivity maintained after link down & Mesh, Triangle, Grid \\
-% \texttt{test\_link\_recovery} & Optimal path restored after link up & Mesh, Triangle \\
-% \texttt{test\_no\_redundancy\_failure} & Correct behaviour when no alternate path exists & Line \\
-% \bottomrule
-% \end{tabular}
-% \caption{Switching Test Cases}
-% \end{table}
 
 \subsubsection{Results}
 
