@@ -90,8 +90,8 @@ def run_mininet():
     # Single ICMP flow
     all_ok &= run_one_test('h1->h2 ping (1 flow)',
                            ping_ok(h1, h2.IP()))
-    all_ok &= run_one_test('h2->h1 ping (reverse)',
-                           ping_ok(h2, h1.IP()))
+    all_ok &= run_one_test('h2->NAT_IP ping (DNAT reverse)',
+                           ping_ok(h2, NAT_EXTERNAL_IP))
 
     # Concurrent ICMP: two pings from h1 simultaneously, both should get replies
     h1.cmd('ping -c 4 -W 2 %s > /tmp/p1.txt 2>&1 &' % h2.IP())

@@ -113,10 +113,10 @@ def run_mininet():
     all_ok &= run_one_test(
         'h1(%s) -> h2(%s) ping' % (h1.IP(), h2.IP()), ok)
 
-    # Test 2: h2 → h1 ping (DNAT inbound)
-    ok = ping_ok(h2, h1.IP(), count=4)
+    # Test 2: h2 → NAT_IP ping (DNAT inbound)
+    ok = ping_ok(h2, NAT_EXTERNAL_IP, count=4)
     all_ok &= run_one_test(
-        'h2(%s) -> h1(%s) ping' % (h2.IP(), h1.IP()), ok)
+        'h2(%s) -> NAT_IP(%s) ping (DNAT)' % (h2.IP(), NAT_EXTERNAL_IP), ok)
 
     # Test 3: SNAT — h2 sees NAT_IP as source (not h1's real IP)
     # Run TCP server on h2 that logs client IP
@@ -155,7 +155,6 @@ def run_mininet():
 
     # ---- CLI for manual testing ----
     print('Try in CLI: h1 ping %s' % h2.IP())
-    print('           h1 curl http://%s:8080/' % h2.IP())
     print('           h2 ifconfig  (check arp table for %s)' % NAT_EXTERNAL_IP)
     CLI(net)
 

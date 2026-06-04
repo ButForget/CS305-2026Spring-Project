@@ -292,7 +292,7 @@ self.update_all_paths()
 
 \subsubsection{Host Learning}
 
-\begin{lstlisting}[caption={Host Learning ¡ª DNS Registration}]
+\begin{lstlisting}[caption={Host Learning ï¿½ï¿½ DNS Registration}]
 self.hosts[mac] = (dpid, port, ip)
 if ip:
     self.arp_table[ip] = mac
@@ -354,7 +354,7 @@ if dst_ip in (self.dns_server_ip, self.nat_external_ip) or \
     self.send_arp_reply(datapath, in_port, self.controller_mac,
                         dst_ip, src_mac, src_ip)
     return
-# Known host ¡ª reply from cache; unknown ¡ª flood
+# Known host ï¿½ï¿½ reply from cache; unknown ï¿½ï¿½ flood
 if dst_ip in self.arp_table:
     self.send_arp_reply(datapath, in_port, self.arp_table[dst_ip],
                         dst_ip, src_mac, src_ip)
@@ -521,7 +521,6 @@ ofctl.set_flow(
     nw_src=src_ip, src_mask=src_mask,
     nw_dst=dst_ip, dst_mask=dst_mask,
     nw_proto=proto_num, tp_src=src_port, tp_dst=dst_port,
-    actions=[]  # empty = DROP
 )
 \end{lstlisting}
 
@@ -983,15 +982,17 @@ The DHCP test suite validates that the controller's built-in DHCP server correct
 
 \subsubsection{What It Verifies}
 
-The firewall test suite validates that deny rules are correctly translated into drop flows and enforced at the data plane:
+The firewall test suite validates that deny rules loaded from \texttt{firewall\_rules.json} are correctly translated into high-priority drop flows (priority 60000) and enforced at the data plane across multiple topologies and rule configurations. The suite covers three test files:
 
 \begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{ICMP Filtering:} Verifies that ICMP traffic (ping) is blocked between hosts specified in the deny rules while remaining permitted between other host pairs.
-    \item \textbf{TCP Port Filtering:} Verifies that TCP connections to blocked ports (e.g., port 80) are rejected while connections to allowed ports (e.g., port 8080) succeed.
-    \item \textbf{Rule Selectivity:} Ensures that firewall rules only affect the traffic they are designed to match, without impacting unrelated flows.
+    \item \textbf{CIDR Subnet Mask Testing (\texttt{test\_network\_firewall\_mask.py}):} A test that verifies CIDR subnet mask support in firewall rules. It validates that /30 masks correctly include only hosts within the subnet range (e.g., 192.168.117.0/30 covers .0--.3) while excluding hosts outside, and similarly for /31 masks. Six targeted tests verify both ICMP and TCP port filtering with exact subnet boundaries.
+    \item \textbf{HeavyMesh Complexity Test (\texttt{test\_network\_firewall\_complexity.py}):} A test that combines firewall enforcement with shortest-path switching on a HeavyMesh topology (6 switches, 8 hosts, 11 switch-to-switch links). Two modes are supported: \textbf{connect} (empty ruleset --- all $C(8,2)=28$ host pairs must be reachable, verifying the firewall does not interfere when inactive) and \textbf{disconnect} (4 bidirectional deny rules blocking h1$\leftrightarrow$h3 and h5$\leftrightarrow$h8 ICMP). In disconnect mode, even though multiple redundant paths exist between the blocked hosts' switches, the firewall drop flows must take precedence at priority 60000. A batch parallel ping mechanism is used to efficiently test all 56 directed ping pairs simultaneously.
+    \item \textbf{Basic Firewall Test (\texttt{test\_network.py}):} A test on the basic single-switch topology that starts HTTP servers on h2 (ports 80 and 8080), then runs ICMP ping and TCP curl tests. It also performs a \texttt{pingAll} to verify the firewall filtering effect.
 \end{itemize}
 
-\subsubsection{Test Topology}
+\subsubsection{Test Topologies}
+
+\paragraph{Simple Topology (used by \texttt{test\_network.py}, \texttt{test\_network\_firewall\_mask.py})}
 
 \begin{figure}[H]
 \centering
@@ -1009,8 +1010,85 @@ The firewall test suite validates that deny rules are correctly translated into 
 \draw[link, dashed] (h2) -- (s1);
 \draw[link, dashed] (h3) -- (s1);
 \end{tikzpicture}
-\caption{Firewall Test Topology --- single switch, 3 hosts}
+\caption{Firewall Simple Test Topology --- single switch, 3 hosts}
 \end{figure}
+
+\paragraph{HeavyMesh Topology (used by \texttt{test\_network\_firewall\_complexity.py})}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
+    cross/.style={thick, gray},
+]
+% Switches (2x3 grid)
+\node[sw] (s1) at (0, 0) {s1};
+\node[sw] (s2) at (3, 0) {s2};
+\node[sw] (s3) at (6, 0) {s3};
+\node[sw] (s4) at (0, -3) {s4};
+\node[sw] (s5) at (3, -3) {s5};
+\node[sw] (s6) at (6, -3) {s6};
+
+% Hosts
+\node[host] (h1) at (-1.2, 1.2) {h1};
+\node[host] (h2) at (1.2, 1.2) {h2};
+\node[host] (h3) at (3, 1.2) {h3};
+\node[host] (h4) at (6, 1.2) {h4};
+\node[host] (h5) at (0, -4.2) {h5};
+\node[host] (h6) at (3, -4.2) {h6};
+\node[host] (h7) at (5.0, -4.2) {h7};
+\node[host] (h8) at (7.0, -4.2) {h8};
+
+% Host-to-switch links (dashed)
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s1);
+\draw[link, dashed] (h3) -- (s2);
+\draw[link, dashed] (h4) -- (s3);
+\draw[link, dashed] (h5) -- (s4);
+\draw[link, dashed] (h6) -- (s5);
+\draw[link, dashed] (h7) -- (s6);
+\draw[link, dashed] (h8) -- (s6);
+
+% Horizontal links
+\draw[link] (s1) -- (s2);
+\draw[link] (s2) -- (s3);
+\draw[link] (s4) -- (s5);
+\draw[link] (s5) -- (s6);
+
+% Vertical links
+\draw[link] (s1) -- (s4);
+\draw[link] (s2) -- (s5);
+\draw[link] (s3) -- (s6);
+
+% Cross-links (diagonals)
+\draw[cross] (s1) -- (s5);
+\draw[cross] (s2) -- (s4);
+\draw[cross] (s2) -- (s6);
+\draw[cross] (s3) -- (s5);
+\end{tikzpicture}
+\caption{Firewall HeavyMesh Test Topology --- 6 switches, 8 hosts, 11 switch-to-switch links}
+\end{figure}
+
+\subsubsection{Test Cases}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}p{5cm}p{4.5cm}p{4cm}@{}}
+\toprule
+\textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
+\midrule
+\texttt{test\_cidr30\_match} & /30 mask: h1 (.2) in 192.168.117.0/30, blocked & \texttt{test\_network\_firewall\_mask.py} \\
+\texttt{test\_cidr30\_nomatch} & /30 mask: h3 (.4) not in 192.168.117.0/30, allowed & \texttt{test\_network\_firewall\_mask.py} \\
+\texttt{test\_cidr31\_match} & /31 mask: h3 (.4) in 192.168.117.4/31, blocked & \texttt{test\_network\_firewall\_mask.py} \\
+\texttt{test\_cidr31\_nomatch} & /31 mask: h1 (.2) not in 192.168.117.4/31, allowed & \texttt{test\_network\_firewall\_mask.py} \\
+\texttt{test\_heavymesh\_connect} & All 28 host pairs reachable (empty ruleset) & \texttt{test\_network\_firewall\_complexity.py} \\
+\texttt{test\_heavymesh\_disconnect} & h1$\leftrightarrow$h3, h5$\leftrightarrow$h8 blocked; all other 24 pairs reachable & \texttt{test\_network\_firewall\_complexity.py} \\
+\bottomrule
+\end{tabular}
+\caption{Firewall Test Cases}
+\end{table}
 
 \subsubsection{Results}
 
@@ -1018,21 +1096,23 @@ The firewall test suite validates that deny rules are correctly translated into 
 \fbox{\textbf{\large All firewall tests: PASSED} \checkmark}
 \end{center}
 
+\textbf{TODO: Paste experimental output here.}
+
 % ----------------------------------------
 \subsection{DNS Tests}
 
 \subsubsection{What It Verifies}
 
-The DNS test suite validates the in-controller DNS resolution service:
+The DNS test suite validates the in-controller DNS resolution service across two topologies and two test files. Hosts obtain IP addresses via the built-in DHCP server, send gratuitous ARP to register with the controller, and then perform DNS queries using \texttt{dig} against the DNS server at 192.168.1.1:
 
 \begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{A Record Resolution:} Querying \texttt{h2.local} from h1 returns the correct IP address assigned to h2.
-    \item \textbf{NXDOMAIN:} Querying a non-existent hostname (\texttt{nonexistent.local}) returns the NXDOMAIN response code.
-    \item \textbf{PTR Reverse Lookup:} Reverse-resolving an IP address returns the correct hostname.
-    \item \textbf{Automatic Registration:} Hosts obtain their IPs via DHCP, and the controller automatically registers their hostnames in the DNS upon learning their ARP bindings.
+    \item \textbf{Basic DNS Test (\texttt{test\_network\_dns.py}):} A test on the simple single-switch topology. After DHCP and ARP registration, it verifies: A-record resolution of \texttt{h2.local} and \texttt{h1.local}, NXDOMAIN for \texttt{nonexistent.local}, and PTR reverse lookups for both hosts' IPs.
+    \item \textbf{Complex Multi-Switch DNS Test (\texttt{test\_network\_dns\_complex.py}):} A test on a 4-switch mesh topology with 6 hosts distributed across switches (h1 on s1, h2 on s2, h3/h5 on s3, h4/h6 on s4). Five test categories are covered: (1) same-switch A-record resolution (h3 $\\leftrightarrow$ h5 on s3; h4 $\\leftrightarrow$ h6 on s4); (2) 1-hop A-record resolution (h1 $\\leftrightarrow$ h3 via direct s1--s3 link); (3) 2-hop A-record resolution (h2 $\\leftrightarrow$ h5, h1 $\\leftrightarrow$ h6); (4) full cross-resolution --- every host resolves every other host's \texttt{*.local} name (30 directed queries); (5) NXDOMAIN for various non-existent hostnames. This test validates that DNS resolution works correctly regardless of the number of switch hops between the querying host and the DNS server.
 \end{itemize}
 
-\subsubsection{Test Topology}
+\subsubsection{Test Topologies}
+
+\paragraph{Simple Topology (used by \texttt{test\_network\_dns.py})}
 
 \begin{figure}[H]
 \centering
@@ -1048,29 +1128,10 @@ The DNS test suite validates the in-controller DNS resolution service:
 \draw[link, dashed] (h1) -- (s1);
 \draw[link, dashed] (s1) -- (h2);
 \end{tikzpicture}
-\caption{DNS Test Topology --- single switch, 2 hosts}
+\caption{DNS Simple Test Topology --- single switch, 2 hosts}
 \end{figure}
 
-\subsubsection{Results}
-\begin{center}
-\fbox{\textbf{\large All DNS tests: PASSED} \checkmark}
-\end{center}
-
-% ----------------------------------------
-\subsection{NAT Tests}
-
-\subsubsection{What It Verifies}
-
-The NAT test suite validates correct address translation between internal and external subnets:
-
-\begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{Basic NAT Connectivity:} Internal host h1 (10.0.1.2) can successfully ping external host h2 (10.0.2.2) through the NAT.
-    \item \textbf{SNAT Source Verification:} External host h2 observes the NAT external IP (10.0.2.100) as the packet source, not h1's real internal IP address.
-    \item \textbf{Bidirectional Connectivity:} External host h2 can initiate communication to h1 through DNAT (by sending to 10.0.2.100).
-    \item \textbf{TCP Through NAT:} A TCP connection (e.g., HTTP on port 80) from h1 to h2 is correctly translated in both directions, maintaining connection state.
-\end{itemize}
-
-\subsubsection{Test Topology}
+\paragraph{Complex Mesh Topology (used by \texttt{test\_network\_dns\_complex.py})}
 
 \begin{figure}[H]
 \centering
@@ -1078,7 +1139,88 @@ The NAT test suite validates correct address translation between internal and ex
     sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
     host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
     link/.style={thick},
-    subnet/.style={draw, dashed, rounded corners, inner sep=0.4cm}
+]
+% Switches
+\node[sw] (s1) at (0, 2.5) {s1};
+\node[sw] (s2) at (3.5, 2.5) {s2};
+\node[sw] (s3) at (0, 0) {s3};
+\node[sw] (s4) at (3.5, 0) {s4};
+
+% Hosts
+\node[host] (h1) at (-1.5, 2.5) {h1};
+\node[host] (h2) at (5, 2.5) {h2};
+\node[host] (h3) at (-1.5, 0) {h3};
+\node[host] (h4) at (5, 0) {h4};
+\node[host] (h5) at (-1.5, -1.5) {h5};
+\node[host] (h6) at (5, -1.5) {h6};
+
+% Switch-to-switch links (mesh)
+\draw[link] (s1) -- (s2);
+\draw[link] (s1) -- (s3);
+\draw[link] (s1) -- (s4);
+\draw[link] (s2) -- (s3);
+\draw[link] (s3) -- (s4);
+
+% Host-to-switch links (dashed)
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s2);
+\draw[link, dashed] (h3) -- (s3);
+\draw[link, dashed] (h4) -- (s4);
+\draw[link, dashed] (h5) -- (s3);
+\draw[link, dashed] (h6) -- (s4);
+\end{tikzpicture}
+\caption{DNS Complex Mesh Test Topology --- 4 switches, 6 hosts, 5 switch-to-switch links}
+\end{figure}
+
+\subsubsection{Test Cases}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}p{5cm}p{4.5cm}p{4cm}@{}}
+\toprule
+\textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
+\midrule
+\texttt{test\_dns\_same\_switch} & Hosts on same switch resolve each other (h3$\\leftrightarrow$h5, h4$\\leftrightarrow$h6) & \texttt{test\_network\_dns\_complex.py} \\
+\texttt{test\_dns\_one\_hop} & Hosts 1 switch hop apart resolve correctly (h1$\\leftrightarrow$h3, h2$\\leftrightarrow$h4) & \texttt{test\_network\_dns\_complex.py} \\
+\texttt{test\_dns\_two\_hops} & Hosts 2 switch hops apart resolve correctly (h2$\\leftrightarrow$h5, h1$\\leftrightarrow$h6) & \texttt{test\_network\_dns\_complex.py} \\
+\texttt{test\_dns\_full\_cross} & Every host resolves every other host (30 directed queries) & \texttt{test\_network\_dns\_complex.py} \\
+\texttt{test\_dns\_nxdomain\_various} & Multiple non-existent hostnames all return NXDOMAIN & \texttt{test\_network\_dns\_complex.py} \\
+\bottomrule
+\end{tabular}
+\caption{DNS Test Cases}
+\end{table}
+
+\subsubsection{Results}
+
+\begin{center}
+\fbox{\textbf{\large All DNS tests: PASSED} \checkmark}
+\end{center}
+
+\textbf{TODO: Paste experimental output here.}
+
+% ----------------------------------------
+\subsection{NAT Tests}
+
+\subsubsection{What It Verifies}
+
+The NAT test suite validates correct address translation (SNAT/DNAT) between the internal subnet (10.0.1.0/24) and external subnet (10.0.2.0/24) across three test files covering basic connectivity, multi-host scenarios, and protocol-level correctness:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \textbf{Basic NAT Test (\texttt{test\_network\_nat.py}):} A test on the basic two-switch topology. It performs three tests: (1) h1 $\\rightarrow$ h2 ping (SNAT outbound); (2) h2 $\\rightarrow$ h1 ping (DNAT inbound); (3) SNAT source verification via a TCP server on h2 that logs the connecting client IP.
+    \item \textbf{Multi-Host NAT Test (\texttt{test\_network\_nat\_multi.py}):} A test with 4 internal hosts (h1--h4: 10.0.1.2--10.0.1.5) and 3 external hosts (h5--h7: 10.0.2.2--10.0.2.4) on a two-switch topology. Four test categories: (1) all 12 internal$\\rightarrow$external ping pairs; (2) all 3 external hosts ping NAT_IP (10.0.2.100) via DNAT; (3) SNAT verification --- all 4 internal hosts connect via TCP to a single external observer (h5), which must see all connections sourced from the NAT external IP (10.0.2.100) but with \\textbf{different translated ports}, proving port uniqueness across concurrent connections; (4) internal hosts can also reach other external hosts beyond the observer.
+    \item \textbf{Protocol Coverage Test (\texttt{test\_network\_nat\_proto.py}):} A test on the basic two-switch topology that exercises all three transport protocols through NAT. \\textbf{ICMP:} single-flow ping (h1$\\rightarrow$h2 and reverse), plus two concurrent pings from h1 to h2 launched simultaneously to verify ICMP identifier-based connection tracking can distinguish separate flows. \\textbf{UDP:} a UDP echo server on h2 (port 22348) receives a datagram from h1 and echoes it back with an \texttt{ECHO:} prefix, validating connectionless UDP translation. \\textbf{TCP:} a TCP echo server on h2 (port 22349) accepts a connection from h1, receives data, and sends back \texttt{ECHO:} prefixed response, validating connection-oriented TCP stream translation and bidirectional checksum correctness.
+\end{itemize}
+
+\subsubsection{Test Topologies}
+
+\paragraph{Basic Topology (used by \texttt{test\_network\_nat.py}, \texttt{test\_network\_nat\_proto.py})}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
+    link/.style={thick},
 ]
 \node[host] (h1) at (0, 0) {h1\\{\scriptsize 10.0.1.2}};
 \node[sw] (s1) at (2.5, 0) {s1};
@@ -1096,14 +1238,79 @@ The NAT test suite validates correct address translation between internal and ex
 % NAT label
 \node[below, font=\scriptsize\bfseries] at (3.75, -0.5) {NAT: 10.0.2.100};
 \end{tikzpicture}
-\caption{NAT Test Topology --- 2 switches, 2 hosts in different subnets}
+\caption{NAT Basic Test Topology --- 2 switches, 2 hosts in different subnets}
 \end{figure}
+
+\paragraph{Multi-Host Topology (used by \texttt{test\_network\_nat\_multi.py})}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    sw/.style={draw, circle, minimum size=0.9cm, font=\footnotesize\bfseries},
+    host/.style={draw, rectangle, rounded corners, minimum size=0.65cm, font=\footnotesize},
+    link/.style={thick},
+]
+% Switches
+\node[sw] (s1) at (2.5, 0) {s1};
+\node[sw] (s2) at (6.5, 0) {s2};
+
+% Internal hosts (left side)
+\node[host] (h1) at (0, 1.5) {h1\\{\scriptsize .2}};
+\node[host] (h2) at (0, 0.5) {h2\\{\scriptsize .3}};
+\node[host] (h3) at (0, -0.5) {h3\\{\scriptsize .4}};
+\node[host] (h4) at (0, -1.5) {h4\\{\scriptsize .5}};
+
+% External hosts (right side)
+\node[host] (h5) at (9, 1.0) {h5\\{\scriptsize .2}};
+\node[host] (h6) at (9, 0) {h6\\{\scriptsize .3}};
+\node[host] (h7) at (9, -1.0) {h7\\{\scriptsize .4}};
+
+% Host-to-switch links
+\draw[link, dashed] (h1) -- (s1);
+\draw[link, dashed] (h2) -- (s1);
+\draw[link, dashed] (h3) -- (s1);
+\draw[link, dashed] (h4) -- (s1);
+\draw[link, dashed] (h5) -- (s2);
+\draw[link, dashed] (h6) -- (s2);
+\draw[link, dashed] (h7) -- (s2);
+
+% Switch-to-switch link
+\draw[link] (s1) -- (s2);
+
+% Labels
+\node[above, font=\scriptsize\itshape] at (1.25, 1.8) {Internal};
+\node[above, font=\scriptsize\itshape] at (7.75, 1.3) {External};
+\node[below, font=\scriptsize\bfseries] at (4.5, -1.8) {NAT: 10.0.2.100};
+\end{tikzpicture}
+\caption{NAT Multi-Host Test Topology --- 4 internal hosts, 3 external hosts, 2 switches}
+\end{figure}
+
+\subsubsection{Test Cases}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}p{5cm}p{4.5cm}p{4cm}@{}}
+\toprule
+\textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
+\midrule
+\texttt{test\_nat\_multi\_ping\_out} & All 12 internal$\\rightarrow$external ping pairs succeed & \texttt{test\_network\_nat\_multi.py} \\
+\texttt{test\_nat\_multi\_ping\_in} & All 3 external hosts ping NAT_IP (10.0.2.100) via DNAT & \texttt{test\_network\_nat\_multi.py} \\
+\texttt{test\_nat\_port\_uniqueness} & 4 internal hosts get 4 distinct translated ports on NAT IP & \texttt{test\_network\_nat\_multi.py} \\
+\texttt{test\_nat\_icmp\_concurrent} & Two simultaneous pings from h1 to h2 both succeed (separate ICMP flows) & \texttt{test\_network\_nat\_proto.py} \\
+\texttt{test\_nat\_udp\_echo} & UDP echo server on h2:22348 echoes back \texttt{ECHO:HELLO} from h1 & \texttt{test\_network\_nat\_proto.py} \\
+\texttt{test\_nat\_tcp\_echo} & TCP echo server on h2:22349 echoes back \texttt{ECHO:HELLO} from h1 & \texttt{test\_network\_nat\_proto.py} \\
+\bottomrule
+\end{tabular}
+\caption{NAT Test Cases}
+\end{table}
 
 \subsubsection{Results}
 
 \begin{center}
 \fbox{\textbf{\large All NAT tests: PASSED} \checkmark}
 \end{center}
+
+\textbf{TODO: Paste experimental output here.}
 
 % ============================================================
 \end{document}

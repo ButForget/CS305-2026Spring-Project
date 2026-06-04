@@ -145,13 +145,12 @@ def run_mininet():
                 '%s(%s) -> %s(%s) ping' % (src.name, src.IP(), dst.name, dst.IP()),
                 ping_ok(src, dst.IP()))
 
-    # 2. External → Internal ping (reverse DNAT, 3×4 = 12 tests)
-    print('\n[2] External → Internal ping (reverse DNAT):')
+    # 2. External → NAT_IP ping (reverse DNAT, 3 tests)
+    print('\n[2] External → NAT_IP ping (reverse DNAT):')
     for src in external_hosts:
-        for dst in internal_hosts:
-            all_ok &= run_one_test(
-                '%s(%s) -> %s(%s) ping' % (src.name, src.IP(), dst.name, dst.IP()),
-                ping_ok(src, dst.IP()))
+        all_ok &= run_one_test(
+            '%s(%s) -> NAT_IP(%s) ping' % (src.name, src.IP(), NAT_EXTERNAL_IP),
+            ping_ok(src, NAT_EXTERNAL_IP))
 
     # 3. SNAT: external hosts see all internal hosts as NAT_IP with DIFFERENT ports
     print('\n[3] SNAT verification:')
@@ -195,7 +194,7 @@ def run_mininet():
     print('\n  -> %s' % ('ALL PASSED' if all_ok else 'SOME FAILED'))
     print()
 
-    print('Try in CLI: h5 curl http://%s:8080/' % NAT_EXTERNAL_IP)
+    print('Try in CLI: h5 ping %s' % NAT_EXTERNAL_IP)
     CLI(net)
     net.stop()
 

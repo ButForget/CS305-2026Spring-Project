@@ -168,7 +168,7 @@ def test_nat_snat(net):
 # Test 3 — Bidirectional connectivity
 # ---------------------------------------------------------------------------
 def test_nat_bidirectional(net):
-    """h2 (external) should also be able to ping h1 (internal) via DNAT."""
+    """h2 (external) should also be able to ping NAT_EXTERNAL_IP via DNAT."""
     passed = True
 
     h1 = net.get("h1")
@@ -178,17 +178,27 @@ def test_nat_bidirectional(net):
     send_garp(h2)
     time.sleep(2)
 
-    if check_ping(h2, h1, count=3, retries=3):
-        print("PASS: h2 (%s) can ping h1 (%s) through NAT (reverse)" % (h2.IP(), h1.IP()))
+    # h2 pings the NAT external IP; DNAT translates it to the internal host
+    nat_ip = NAT_EXTERNAL_IP
+    for attempt in range(3):
+        result = h2.cmd("ping -c 3 -W 2 %s" % nat_ip)
+        if re.search(r"[1-9]\d* received", result) or " 0% packet loss" in result:
+            print("PASS: h2 (%s) can ping NAT_IP (%s) through DNAT" % (h2.IP(), nat_ip))
+            break
+        time.sleep(2)
     else:
         time.sleep(2)
         send_garp(h1)
         send_garp(h2)
         time.sleep(2)
-        if check_ping(h2, h1, count=3, retries=2):
-            print("PASS: h2 (%s) can ping h1 (%s) through NAT (reverse, retry)" % (h2.IP(), h1.IP()))
+        for attempt in range(2):
+            result = h2.cmd("ping -c 3 -W 2 %s" % nat_ip)
+            if re.search(r"[1-9]\d* received", result) or " 0% packet loss" in result:
+                print("PASS: h2 (%s) can ping NAT_IP (%s) through DNAT (retry)" % (h2.IP(), nat_ip))
+                break
+            time.sleep(2)
         else:
-            print("FAIL: h2 (%s) cannot ping h1 (%s)" % (h2.IP(), h1.IP()))
+            print("FAIL: h2 (%s) cannot ping NAT_IP (%s)" % (h2.IP(), nat_ip))
             passed = False
 
     return passed

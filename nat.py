@@ -153,27 +153,11 @@ class NAT:
                                     hosts, arp_table, controller_mac, logger,
                                     raw_data=raw_data)
 
-        # --- Inbound to NAT IP: External → NAT_IP (DNAT) ---
-        if cls.is_external(src_ip) and dst_ip == cls.NAT_EXTERNAL_IP:
+        # --- Inbound: External → NAT_IP (DNAT) or External → Internal (also DNAT) ---
+        if cls.is_external(src_ip) and (dst_ip == cls.NAT_EXTERNAL_IP or cls.is_internal(dst_ip)):
             return cls._handle_dnat(datapath, in_port, pkt, eth, ip_hdr,
                                     hosts, arp_table, controller_mac, logger,
                                     raw_data=raw_data)
-
-        # --- Direct External → Internal (no NAT, just forward) ---
-        if cls.is_external(src_ip) and cls.is_internal(dst_ip):
-            if raw_data is not None:
-                raw = bytearray(raw_data)
-            else:
-                pkt.serialize()
-                raw = bytearray(pkt.data)
-            dst_mac = arp_table.get(dst_ip)
-            out_dpid, out_port = cls._find_host_port(dst_ip, hosts, arp_table)
-            if not dst_mac or out_port is None:
-                logger.debug("Direct fwd: cannot find %s", dst_ip)
-                return None, None, None
-            raw = cls._rewrite_eth_macs(raw, controller_mac, dst_mac)
-            logger.info("Direct fwd: %s -> %s (out_port=%d)", src_ip, dst_ip, out_port)
-            return out_dpid, out_port, bytes(raw)
 
         return None, None, None
 
@@ -309,6 +293,7 @@ class NAT:
         original_port = 0
         original_src_port = 0
         has_ports = False
+        found_connection = False
 
         if tcp_hdr:
             has_ports = True
@@ -322,6 +307,7 @@ class NAT:
                     original_port = oport
                     original_src_port = eport
                     info["timestamp"] = time.time()
+                    found_connection = True
                     break
         elif udp_hdr:
             has_ports = True
@@ -335,12 +321,14 @@ class NAT:
                     original_port = oport
                     original_src_port = eport
                     info["timestamp"] = time.time()
+                    found_connection = True
                     break
         else:
             for (p, oip, oport, eip, eport), info in cls._connections.items():
                 if eip == src_ip and p == proto:
                     original_ip = oip
                     info["timestamp"] = time.time()
+                    found_connection = True
                     break
             if not original_ip:
                 # Extract ICMP identifier from reply for per-flow matching
@@ -358,17 +346,33 @@ class NAT:
                     if eip == src_ip and p == proto and icmp_id == reply_icmp_id:
                         original_ip = oip
                         cls._icmp_connections[conn_key] = (icmp_id, time.time())
+                        found_connection = True
+                        break
+
+        if not original_ip:
+            # No existing connection — handle as new inbound flow.
+            if cls.is_internal(dst_ip):
+                # External host directly addresses an internal IP: forward as-is.
+                original_ip = dst_ip
+            else:
+                # New inbound connection to NAT_EXTERNAL_IP: pick first known internal host.
+                for mac, (dpid, port, ip) in hosts.items():
+                    if cls.is_internal(ip):
+                        original_ip = ip
+                        logger.debug("DNAT: new inbound to %s -> default internal %s",
+                                     dst_ip, original_ip)
                         break
 
         if not original_ip:
             logger.debug("DNAT: no connection found for dst=%s src=%s", dst_ip, src_ip)
             return None, None, None
 
-        # Rewrite destination IP FIRST
-        raw = cls._rewrite_ip_dst(raw, dst_ip, original_ip)
+        # Rewrite destination IP FIRST (only if different from original)
+        if dst_ip != original_ip:
+            raw = cls._rewrite_ip_dst(raw, dst_ip, original_ip)
 
-        # Then rewrite TCP/UDP ports (checksum uses new IP)
-        if has_ports:
+        # Then rewrite TCP/UDP ports (only when a real connection mapping exists)
+        if has_ports and found_connection:
             if tcp_hdr:
                 # Keep source port unchanged, rewrite destination port from NAT_PORT to original_port
                 raw = cls._rewrite_tcp_ports(raw,
