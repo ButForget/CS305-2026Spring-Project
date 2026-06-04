@@ -1041,8 +1041,6 @@ Single-switch star with exactly 3 hosts (\texttt{h1}, \texttt{h2}, \texttt{h3}),
 \fbox{\textbf{\large All DHCP tests: PASSED} \checkmark}
 \end{center}
 
-\textbf{TODO: Paste experimental output here.}
-
 % ----------------------------------------
 \subsection{Firewall Tests}
 
@@ -1171,7 +1169,7 @@ The DNS test suite validates the in-controller DNS resolution service across two
 
 \begin{itemize}[leftmargin=1.5cm]
     \item \textbf{Basic DNS Test (\texttt{test\_network\_dns.py}):} A test on the simple single-switch topology. After DHCP and ARP registration, it verifies: A-record resolution of \texttt{h2.local} and \texttt{h1.local}, NXDOMAIN for \texttt{nonexistent.local}, and PTR reverse lookups for both hosts' IPs.
-    \item \textbf{Complex Multi-Switch DNS Test (\texttt{test\_network\_dns\_complex.py}):} A test on a 4-switch mesh topology with 6 hosts distributed across switches (h1 on s1, h2 on s2, h3/h5 on s3, h4/h6 on s4). Five test categories are covered: (1) same-switch A-record resolution (h3 $\\leftrightarrow$ h5 on s3; h4 $\\leftrightarrow$ h6 on s4); (2) 1-hop A-record resolution (h1 $\\leftrightarrow$ h3 via direct s1--s3 link); (3) 2-hop A-record resolution (h2 $\\leftrightarrow$ h5, h1 $\\leftrightarrow$ h6); (4) full cross-resolution --- every host resolves every other host's \texttt{*.local} name (30 directed queries); (5) NXDOMAIN for various non-existent hostnames. This test validates that DNS resolution works correctly regardless of the number of switch hops between the querying host and the DNS server.
+    \item \textbf{Complex Multi-Switch DNS Test (\texttt{test\_network\_dns\_complex.py}):} A test on a 4-switch mesh topology with 6 hosts distributed across switches (h1 on s1, h2 on s2, h3/h5 on s3, h4/h6 on s4). Five test categories are covered: (1) same-switch A-record resolution (h3 $\leftrightarrow$ h5 on s3; h4 $\leftrightarrow$ h6 on s4); (2) 1-hop A-record resolution (h1 $\leftrightarrow$ h3 via direct s1--s3 link); (3) 2-hop A-record resolution (h2 $\leftrightarrow$ h5, h1 $\leftrightarrow$ h6); (4) full cross-resolution --- every host resolves every other host's \texttt{*.local} name (30 directed queries); (5) NXDOMAIN for various non-existent hostnames. This test validates that DNS resolution works correctly regardless of the number of switch hops between the querying host and the DNS server.
 \end{itemize}
 
 \subsubsection{Test Topologies}
@@ -1244,9 +1242,9 @@ The DNS test suite validates the in-controller DNS resolution service across two
 \toprule
 \textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
 \midrule
-\texttt{test\_dns\_same\_switch} & Hosts on same switch resolve each other (h3$\\leftrightarrow$h5, h4$\\leftrightarrow$h6) & \texttt{test\_network\_dns\_complex.py} \\
-\texttt{test\_dns\_one\_hop} & Hosts 1 switch hop apart resolve correctly (h1$\\leftrightarrow$h3, h2$\\leftrightarrow$h4) & \texttt{test\_network\_dns\_complex.py} \\
-\texttt{test\_dns\_two\_hops} & Hosts 2 switch hops apart resolve correctly (h2$\\leftrightarrow$h5, h1$\\leftrightarrow$h6) & \texttt{test\_network\_dns\_complex.py} \\
+\texttt{test\_dns\_same\_switch} & Hosts on same switch resolve each other (h3$\leftrightarrow$h5, h4$\leftrightarrow$h6) & \texttt{test\_network\_dns\_complex.py} \\
+\texttt{test\_dns\_one\_hop} & Hosts 1 switch hop apart resolve correctly (h1$\leftrightarrow$h3, h2$\leftrightarrow$h4) & \texttt{test\_network\_dns\_complex.py} \\
+\texttt{test\_dns\_two\_hops} & Hosts 2 switch hops apart resolve correctly (h2$\leftrightarrow$h5, h1$\leftrightarrow$h6) & \texttt{test\_network\_dns\_complex.py} \\
 \texttt{test\_dns\_full\_cross} & Every host resolves every other host (30 directed queries) & \texttt{test\_network\_dns\_complex.py} \\
 \texttt{test\_dns\_nxdomain\_various} & Multiple non-existent hostnames all return NXDOMAIN & \texttt{test\_network\_dns\_complex.py} \\
 \bottomrule
@@ -1268,9 +1266,9 @@ The DNS test suite validates the in-controller DNS resolution service across two
 The NAT test suite validates correct address translation (SNAT/DNAT) between the internal subnet (10.0.1.0/24) and external subnet (10.0.2.0/24) across three test files covering basic connectivity, multi-host scenarios, and protocol-level correctness:
 
 \begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{Basic NAT Test (\texttt{test\_network\_nat.py}):} A test on the basic two-switch topology. It performs three tests: (1) h1 $\\rightarrow$ h2 ping (SNAT outbound); (2) h2 $\\rightarrow$ h1 ping (DNAT inbound); (3) SNAT source verification via a TCP server on h2 that logs the connecting client IP.
-    \item \textbf{Multi-Host NAT Test (\texttt{test\_network\_nat\_multi.py}):} A test with 4 internal hosts (h1--h4: 10.0.1.2--10.0.1.5) and 3 external hosts (h5--h7: 10.0.2.2--10.0.2.4) on a two-switch topology. Four test categories: (1) all 12 internal$\\rightarrow$external ping pairs; (2) all 3 external hosts ping NAT_IP (10.0.2.100) via DNAT; (3) SNAT verification --- all 4 internal hosts connect via TCP to a single external observer (h5), which must see all connections sourced from the NAT external IP (10.0.2.100) but with \\textbf{different translated ports}, proving port uniqueness across concurrent connections; (4) internal hosts can also reach other external hosts beyond the observer.
-    \item \textbf{Protocol Coverage Test (\texttt{test\_network\_nat\_proto.py}):} A test on the basic two-switch topology that exercises all three transport protocols through NAT. \\textbf{ICMP:} single-flow ping (h1$\\rightarrow$h2 and reverse), plus two concurrent pings from h1 to h2 launched simultaneously to verify ICMP identifier-based connection tracking can distinguish separate flows. \\textbf{UDP:} a UDP echo server on h2 (port 22348) receives a datagram from h1 and echoes it back with an \texttt{ECHO:} prefix, validating connectionless UDP translation. \\textbf{TCP:} a TCP echo server on h2 (port 22349) accepts a connection from h1, receives data, and sends back \texttt{ECHO:} prefixed response, validating connection-oriented TCP stream translation and bidirectional checksum correctness.
+    \item \textbf{Basic NAT Test (\texttt{test\_network\_nat.py}):} A test on the basic two-switch topology. It performs three tests: (1) h1 $\rightarrow$ h2 ping (SNAT outbound); (2) h2 $\rightarrow$ h1 ping (DNAT inbound); (3) SNAT source verification via a TCP server on h2 that logs the connecting client IP.
+    \item \textbf{Multi-Host NAT Test (\texttt{test\_network\_nat\_multi.py}):} A test with 4 internal hosts (h1--h4: 10.0.1.2--10.0.1.5) and 3 external hosts (h5--h7: 10.0.2.2--10.0.2.4) on a two-switch topology. Four test categories: (1) all 12 internal$\rightarrow$external ping pairs; (2) all 3 external hosts ping NAT_IP (10.0.2.100) via DNAT; (3) SNAT verification --- all 4 internal hosts connect via TCP to a single external observer (h5), which must see all connections sourced from the NAT external IP (10.0.2.100) but with \textbf{different translated ports}, proving port uniqueness across concurrent connections; (4) internal hosts can also reach other external hosts beyond the observer.
+    \item \textbf{Protocol Coverage Test (\texttt{test\_network\_nat\_proto.py}):} A test on the basic two-switch topology that exercises all three transport protocols through NAT. \textbf{ICMP:} single-flow ping (h1$\rightarrow$h2 and reverse), plus two concurrent pings from h1 to h2 launched simultaneously to verify ICMP identifier-based connection tracking can distinguish separate flows. \textbf{UDP:} a UDP echo server on h2 (port 22348) receives a datagram from h1 and echoes it back with an \texttt{ECHO:} prefix, validating connectionless UDP translation. \textbf{TCP:} a TCP echo server on h2 (port 22349) accepts a connection from h1, receives data, and sends back \texttt{ECHO:} prefixed response, validating connection-oriented TCP stream translation and bidirectional checksum correctness.
 \end{itemize}
 
 \subsubsection{Test Topologies}
@@ -1355,7 +1353,7 @@ The NAT test suite validates correct address translation (SNAT/DNAT) between the
 \toprule
 \textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
 \midrule
-\texttt{test\_nat\_multi\_ping\_out} & All 12 internal$\\rightarrow$external ping pairs succeed & \texttt{test\_network\_nat\_multi.py} \\
+\texttt{test\_nat\_multi\_ping\_out} & All 12 internal$\rightarrow$external ping pairs succeed & \texttt{test\_network\_nat\_multi.py} \\
 \texttt{test\_nat\_multi\_ping\_in} & All 3 external hosts ping NAT_IP (10.0.2.100) via DNAT & \texttt{test\_network\_nat\_multi.py} \\
 \texttt{test\_nat\_port\_uniqueness} & 4 internal hosts get 4 distinct translated ports on NAT IP & \texttt{test\_network\_nat\_multi.py} \\
 \texttt{test\_nat\_icmp\_concurrent} & Two simultaneous pings from h1 to h2 both succeed (separate ICMP flows) & \texttt{test\_network\_nat\_proto.py} \\
