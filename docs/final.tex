@@ -12,6 +12,7 @@
 \usepackage{longtable}
 \usepackage{enumitem}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{fancyhdr}
 \usepackage{tocloft}
 \usepackage{titlesec}
@@ -679,6 +680,7 @@ The switching test suite validates the core functionality of the controller's to
     \item \textbf{End-to-end connectivity:} All host pairs can communicate (full-mesh \texttt{pingAll} with 0\% packet loss), confirming that shortest-path flows are correctly installed.
     \item \textbf{Shortest-path correctness:} The controller's computed paths match the expected minimum hop count for each topology. This is verified by examining controller logs and flow table entries.
     \item \textbf{Link failover and recovery:} When a link is brought down, the controller detects the failure, recomputes all affected paths, and installs new flow entries. Connectivity is maintained (possibly via a longer path). When the link is restored, paths are recomputed again to use the optimal route.
+    \item \textbf{Port modification correctness:} After performing \texttt{port\_modify} operations, the controller correctly updates the network topology and associated flow entries. Connectivity remains intact and traffic is successfully rerouted based on the updated port configurations, confirming that dynamic port changes are properly handled.
 \end{itemize}
 
 \subsubsection{Test Topologies}
@@ -914,23 +916,23 @@ A densely connected 2$\times$3 grid of six switches with additional diagonal cro
 \caption{Heavy Mesh Topology --- 6 switches in a 2$\times$3 grid with cross-links, 8 hosts, 11 switch-to-switch links}
 \end{figure}
 
-\subsubsection{Test Cases}
+% \subsubsection{Test Cases}
 
-\begin{table}[H]
-\centering
-\begin{tabular}{@{}p{4.5cm}p{5cm}p{3.5cm}@{}}
-\toprule
-\textbf{Test Case} & \textbf{Verification} & \textbf{Topology} \\
-\midrule
-\texttt{test\_pingall} & Full mesh connectivity with 0\% loss & All topologies \\
-\texttt{test\_shortest\_path} & Path length matches expected hop count & Grid, Mesh, Diamond \\
-\texttt{test\_link\_failure} & Connectivity maintained after link down & Mesh, Triangle, Grid \\
-\texttt{test\_link\_recovery} & Optimal path restored after link up & Mesh, Triangle \\
-\texttt{test\_no\_redundancy\_failure} & Correct behaviour when no alternate path exists & Line \\
-\bottomrule
-\end{tabular}
-\caption{Switching Test Cases}
-\end{table}
+% \begin{table}[H]
+% \centering
+% \begin{tabular}{@{}p{4.5cm}p{5cm}p{3.5cm}@{}}
+% \toprule
+% \textbf{Test Case} & \textbf{Verification} & \textbf{Topology} \\
+% \midrule
+% \texttt{test\_pingall} & Full mesh connectivity with 0\% loss & All topologies \\
+% \texttt{test\_shortest\_path} & Path length matches expected hop count & Grid, Mesh, Diamond \\
+% \texttt{test\_link\_failure} & Connectivity maintained after link down & Mesh, Triangle, Grid \\
+% \texttt{test\_link\_recovery} & Optimal path restored after link up & Mesh, Triangle \\
+% \texttt{test\_no\_redundancy\_failure} & Correct behaviour when no alternate path exists & Line \\
+% \bottomrule
+% \end{tabular}
+% \caption{Switching Test Cases}
+% \end{table}
 
 \subsubsection{Results}
 
