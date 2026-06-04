@@ -15,6 +15,8 @@ if not hasattr(dhcp, "DHCP_RELEASE"):
     dhcp.DHCP_RELEASE = 7
 if not hasattr(dhcp, "DHCP_NAK"):
     dhcp.DHCP_NAK = 6
+if not hasattr(dhcp, "DHCP_MESSAGE_OPT"):
+    dhcp.DHCP_MESSAGE_OPT = 56
 
 
 class Config:
@@ -153,6 +155,8 @@ class DHCPServer:
             if offered_ip:
                 offer = cls.assemble_offer(pkt, datapath, offered_ip)
                 cls._send_packet(datapath, port, offer)
+            else:
+                cls._send_packet(datapath, port, cls.assemble_nak(pkt, datapath))
 
         elif msg_type == dhcp.DHCP_REQUEST:
             client_mac = dhcp_obj.chaddr

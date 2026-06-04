@@ -213,7 +213,11 @@ project/
 |   |-- switching_test/
 |   |   +-- test_network.py  # Switching test script
 |   |-- dhcp_test/
-|   |   +-- test_network.py  # DHCP test script
+|   |   |-- test_network.py         # DHCP interactive test (basic, release, duplicate)
+|   |   |-- test_network_overflow.py # DHCP overflow test (more hosts than IPs)
+|   |   |-- test_lease_expiry.py    # DHCP lease expiration test (timed expiry)
+|   |   +-- ci/
+|   |       +-- test_dhcp.py        # DHCP CI test
 |   |-- firewall_test/
 |   |   +-- test_network.py  # Firewall test script
 |   |-- dns_test/
@@ -390,12 +394,13 @@ The DHCP module implements a fully-featured Dynamic Host Configuration Protocol 
 The DHCP server provides the following capabilities:
 
 \begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{Address Pool Management:} Maintains a pool of available IP addresses (192.168.1.2 through 192.168.1.100) using a deque structure for efficient allocation and release.
+    \item \textbf{Address Pool Management:} Maintains a pool of available IP addresses (192.168.1.2 through 192.168.1.10) using a deque structure for efficient allocation and release, with a parallel set for O(1) duplicate-prevention checks.
     \item \textbf{Full DHCP Lifecycle:} Handles the complete four-message handshake (DISCOVER $\rightarrow$ OFFER $\rightarrow$ REQUEST $\rightarrow$ ACK) as well as RELEASE messages for graceful address return.
     \item \textbf{Lease Management:} Tracks active leases with timestamps and configurable lease durations (86400 seconds default). Expired leases are automatically reclaimed.
-    \item \textbf{Duplicate Prevention:} Ensures no IP address is allocated to multiple clients simultaneously through careful tracking of offers and bindings.
-    \item \textbf{Stale Offer Expiration:} Offers that are not followed by a REQUEST within 30 seconds are automatically expired and the address is returned to the pool.
-    \item \textbf{NAK Handling:} Responds with DHCPNAK when a client requests an unavailable address (e.g., one already allocated to another client).
+    \item \textbf{Duplicate Prevention:} Ensures no IP address is allocated to multiple clients simultaneously through careful tracking of offers and bindings. Also detects when a client requests an IP that was offered to a different MAC, and responds with NAK.
+    \item \textbf{Stale Offer Expiration:} Offers that are not followed by a REQUEST within 30 seconds are automatically expired and the address is returned to the pool. This cleanup runs on every \texttt{handle\_dhcp} call.
+    \item \textbf{Pool-Range Enforcement:} If a client requests an IP that falls outside the configured pool range \texttt{[start\_ip, end\_ip]}, the server responds with DHCPNAK regardless of the IP's availability status.
+    \item \textbf{NAK Handling:} Responds with DHCPNAK when a client requests an unavailable address (e.g., one already allocated to another client, an address outside the pool range, an address offered to a different MAC address). Also sends NAK when a DISCOVER cannot be satisfied because the pool is exhausted.
 \end{itemize}
 
 \subsection{Key Data Structures}
@@ -407,6 +412,7 @@ The DHCP server provides the following capabilities:
 \textbf{Structure} & \textbf{Description} \\
 \midrule
 \texttt{\_ip\_pool} & \texttt{deque} of available IP addresses for allocation \\
+\texttt{\_ip\_pool\_set} & \texttt{set[str]} --- membership-tracking set for quick duplicate-prevention checks \\
 \texttt{\_leases} & \texttt{\{ip: \{mac, start\_time, lease\_time\}\}} --- active lease records \\
 \texttt{\_offered} & \texttt{\{ip: (mac, xid, timestamp)\}} --- pending offers awaiting REQUEST \\
 \texttt{\_mac\_offers} & \texttt{\{mac: ip\}} --- reverse lookup from MAC to offered IP \\
@@ -423,18 +429,27 @@ if msg_type == DISCOVER:
     offered_ip = cls._select_ip(client_mac, xid)
     if offered_ip:
         cls._send_packet(port, cls.assemble_offer(pkt, datapath, offered_ip))
+    else:
+        cls._send_packet(port, cls.assemble_nak(pkt, datapath))
 elif msg_type == REQUEST:
-    if cls._is_ip_available(requested_ip, client_mac):
+    if not cls._is_pool_ip(requested_ip):
+        cls._send_packet(port, cls.assemble_nak(pkt, datapath))
+    elif cls._is_ip_available(requested_ip, client_mac):
+        # Check offer MAC matches; release old IP if changing
         cls._leases[requested_ip] = {'mac': client_mac, ...}
-        cls._send_packet(port, cls.assemble_ack(pkt, datapath, port))
+        cls._mac_bindings[client_mac] = requested_ip
+        cls._ip_pool.remove(requested_ip)
+        cls._send_packet(port, cls.assemble_ack(pkt, datapath, port,
+                          is_renewal=is_renewal))
     else:
         cls._send_packet(port, cls.assemble_nak(pkt, datapath))
 elif msg_type == RELEASE:
-    cls._release_ip(cls._mac_bindings[client_mac])
+    cls._release_ip(cls._mac_bindings.get(client_mac))
 \end{lstlisting}
 
 \begin{lstlisting}[caption={IP Selection with Duplicate Prevention}]
-# Reuse pending offer if exists; otherwise rotate pool to find available IP
+# Reuse pending offer if exists; otherwise rotate pool to find available IP;
+# if pool exhausted, fall back to re-offering already-bound IP
 if mac in cls._mac_offers:
     return cls._mac_offers[mac]
 for _ in range(len(cls._ip_pool)):
@@ -443,8 +458,25 @@ for _ in range(len(cls._ip_pool)):
         cls._mac_offers[mac] = ip
         cls._offered[ip] = (mac, xid, time.time())
         return ip
+if mac in cls._mac_bindings:
+    ip = cls._mac_bindings[mac]
+    cls._mac_offers[mac] = ip
+    cls._offered[ip] = (mac, xid, time.time())
+    return ip
 return None
 \end{lstlisting}
+
+In addition to the core selection logic, several supplementary helper methods support the allocation pipeline:
+
+\begin{itemize}[leftmargin=1.5cm]
+    \item \texttt{\_is\_pool\_ip(ip)} --- Validates whether a given IP address falls within the configured pool range \texttt{[start\_ip, end\_ip]}. Used during REQUEST processing to reject (via NAK) any request for an address outside the allocated pool.
+    \item \texttt{\_expire\_offers()} --- Called at the top of every \texttt{handle\_dhcp} invocation alongside \texttt{\_expire\_leases}. Iterates \texttt{\_offered} and removes any offer where the timestamp is older than 30 seconds, returning the IP to availability.
+    \item \texttt{\_ip\_pool\_set} --- A \texttt{set[str]} mirror of the deque pool used for O(1) membership checks in \texttt{\_release\_ip} to prevent re-enqueuing an IP that is already in the pool.
+\end{itemize}
+
+\subsubsection{ACK Renewal Behaviour}
+
+The \texttt{assemble\_ack} method accepts an optional \texttt{is\_renewal} parameter (default \texttt{False}). For new leases, the ACK is sent to the broadcast Ethernet and IP addresses (\texttt{ff:ff:ff:ff:ff:ff} / 255.255.255.255). For renewals (when the client already holds the IP and is simply extending its lease), the ACK is unicast directly to the client's MAC address and its assigned IP address, avoiding unnecessary broadcast traffic.
 
 \subsection{Configuration}
 
@@ -455,7 +487,7 @@ return None
 \textbf{Parameter} & \textbf{Value} \\
 \midrule
 Server IP & 192.168.1.1 \\
-Address Pool & 192.168.1.2 -- 192.168.1.100 (99 addresses) \\
+Address Pool & 192.168.1.2 -- 192.168.1.10 (9 addresses) \\
 Subnet Mask & 255.255.255.0 \\
 Default Gateway & 192.168.1.1 \\
 Lease Time & 86400 seconds (24 hours) \\
@@ -943,16 +975,19 @@ A densely connected 2$\times$3 grid of six switches with additional diagonal cro
 
 \subsubsection{What It Verifies}
 
-The DHCP test suite validates that the controller's built-in DHCP server correctly allocates IP addresses to hosts, handling the complete DHCP lifecycle:
+The DHCP test suite validates that the controller's built-in DHCP server correctly allocates IP addresses to hosts, handling the complete DHCP lifecycle across both interactive and CI test files:
 
 \begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{DISCOVER/OFFER:} Hosts broadcast a DHCP DISCOVER message and receive a valid OFFER with an IP from the configured pool.
-    \item \textbf{REQUEST/ACK:} Hosts confirm the offered address via REQUEST and receive an ACK with correct lease parameters.
-    \item \textbf{IP Uniqueness:} Multiple hosts receive distinct IP addresses with no conflicts.
-    \item \textbf{Pool Range:} All allocated addresses fall within the configured pool (192.168.1.2--192.168.1.100).
+    \item \textbf{Basic DHCP (\texttt{test\_network.py}, \texttt{test\_dhcp.py}):} Hosts broadcast a DHCP DISCOVER message and receive a valid OFFER with an IP from the configured pool. Hosts confirm the offered address via REQUEST and receive an ACK with correct lease parameters. Multiple hosts receive distinct IP addresses with no conflicts, and all allocated addresses fall within the pool range.
+    \item \textbf{DHCP RELEASE (\texttt{test\_network.py}, \texttt{test\_dhcp.py}):} (Bonus) A host releases its DHCP lease; the IP is returned to the pool and can be re-issued to another host. The interactive test uses pool exhaustion (requires a pool size $\leq$ number of hosts) to prove that a released IP is truly reclaimed.
+    \item \textbf{Duplicate IP Rejection (\texttt{test\_network.py}, \texttt{test\_dhcp.py}):} (Bonus) A host attempts to steal an IP that is already bound to another host. The server responds with DHCPNAK and either assigns a different IP or leaves the client without a valid address.
+    \item \textbf{Overflow (\texttt{test\_network\_overflow.py}):} (Bonus) Deploys more hosts than available pool addresses and verifies that the server correctly handles pool exhaustion — the last host(s) fail to obtain an IP.
+    \item \textbf{Lease Expiry (\texttt{test\_lease\_expiry.py}):} (Bonus) Validates that expired leases are automatically reclaimed. Requires manually setting a short \texttt{Config.lease\_time} (e.g., 5 seconds) and a 2-IP pool (\texttt{end\_ip="192.168.1.3"}). Uses 3 hosts: h1 and h2 exhaust the pool, h1's dhclient is killed and IP stripped, then a fresh third host (h3) fails to obtain an IP before the timeout but succeeds afterward — proving the lease expired and was reclaimed.
 \end{itemize}
 
 \subsubsection{Test Topology}
+
+The interactive test uses a single-switch topology with 3 hosts (to enable pool exhaustion in the release test when the pool is small). The CI test uses a single-switch topology with 2 hosts.
 
 \begin{figure}[H]
 \centering
@@ -961,15 +996,35 @@ The DHCP test suite validates that the controller's built-in DHCP server correct
     host/.style={draw, rectangle, rounded corners, minimum size=0.7cm, font=\footnotesize},
     link/.style={thick},
 ]
-\node[sw] (s1) at (2, 0) {s1};
-\node[host] (h1) at (0.5, 1.5) {h1};
-\node[host] (h2) at (3.5, 1.5) {h2};
+\node[sw] (s1) at (2.5, 0) {s1};
+\node[host] (h1) at (0, 1.5) {h1};
+\node[host] (h2) at (2.5, 1.5) {h2};
+\node[host] (h3) at (5, 1.5) {h3};
 
 \draw[link, dashed] (h1) -- (s1);
 \draw[link, dashed] (h2) -- (s1);
+\draw[link, dashed] (h3) -- (s1);
 \end{tikzpicture}
-\caption{DHCP Test Topology --- single switch, 2 hosts}
+\caption{DHCP Test Topology --- single switch, up to 3 hosts (h3 used for pool-exhaustion release tests)}
 \end{figure}
+
+\subsubsection{Test Cases}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}p{5cm}p{4.5cm}p{4cm}@{}}
+\toprule
+\textbf{Test Case} & \textbf{Verification} & \textbf{Source File} \\
+\midrule
+\texttt{test\_basic\_dhcp} & Two hosts each get a valid, unique pool IP & \texttt{test\_dhcp.py} (CI), \texttt{test\_network.py} (3 hosts) \\
+\texttt{test\_dhcp\_release} & Released IP is returned to pool and re-issued & \texttt{test\_dhcp.py} (CI), \texttt{test\_network.py} \\
+\texttt{test\_duplicate\_ip} & Server sends NAK for stolen IP; host gets different IP or no IP & \texttt{test\_dhcp.py} (CI), \texttt{test\_network.py} \\
+\texttt{test\_overflow} & More hosts than pool IPs; excess hosts fail to get IP & \texttt{test\_network\_overflow.py} \\
+\texttt{test\_lease\_expiry} & Expired lease reclaimed after timeout; fresh host gets same IP & \texttt{test\_lease\_expiry.py} \\
+\bottomrule
+\end{tabular}
+\caption{DHCP Test Cases}
+\end{table}
 
 \subsubsection{Results}
 
