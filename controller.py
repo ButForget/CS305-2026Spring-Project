@@ -108,7 +108,7 @@ class ControllerApp(app_manager.OSKenApp):
         self.hosts[host.mac] = (host.port.dpid, host.port.port_no, ip)
         if ip:
             self.arp_table[ip] = host.mac
-        self.logger.info(f"Host {host.mac} (IP={ip}) added at s{host.port.dpid}:{host.port.port_no}")
+        # self.logger.info(f"Host {host.mac} (IP={ip}) added at s{host.port.dpid}:{host.port.port_no}")
         self.update_all_paths()
 
     @set_ev_cls(event.EventLinkAdd)
@@ -281,7 +281,7 @@ class ControllerApp(app_manager.OSKenApp):
             hostname = self._mac_to_hostname(mac)
             DNSServer.register_host("%s.local" % hostname, ip)
             DNSServer.register_host(hostname, ip)
-        self.logger.info(f"Learned host from packet: {mac} (IP={ip}) at s{dpid}:{port}")
+        # self.logger.info(f"Learned host from packet: {mac} (IP={ip}) at s{dpid}:{port}")
         self.update_all_paths()
         
 
@@ -432,15 +432,15 @@ class ControllerApp(app_manager.OSKenApp):
         """
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        try:
-            dpid = datapath.id
-        except Exception:
-            dpid = getattr(datapath, 'id', 'unknown')
+        # try:
+        #     dpid = datapath.id
+        # except Exception:
+        #     dpid = getattr(datapath, 'id', 'unknown')
         # Log flow install attempt for debugging
-        try:
-            self.logger.info(f"Installing flow on s{dpid}: priority={priority} match={match} actions={actions} idle={idle_timeout} hard={hard_timeout}")
-        except Exception:
-            self.logger.info(f"Installing flow on s{dpid}: priority={priority} idle={idle_timeout} hard={hard_timeout}")
+        # try:
+        #     self.logger.info(f"Installing flow on s{dpid}: priority={priority} match={match} actions={actions} idle={idle_timeout} hard={hard_timeout}")
+        # except Exception:
+        #     self.logger.info(f"Installing flow on s{dpid}: priority={priority} idle={idle_timeout} hard={hard_timeout}")
         mod = parser.OFPFlowMod(
             datapath=datapath,
             match=match,
@@ -497,7 +497,7 @@ class ControllerApp(app_manager.OSKenApp):
         parser = dp.ofproto_parser
         match = parser.OFPMatch(dl_dst=dst_mac)
         actions = [parser.OFPActionOutput(dst_port)]
-        self.logger.info(f"Install single-switch flow s{dpid} -> out:{dst_port} for dst_mac={dst_mac}")
+        # self.logger.info(f"Install single-switch flow s{dpid} -> out:{dst_port} for dst_mac={dst_mac}")
         self.add_flow(dp, 1, match, actions)
 
     def install_path(self, path, dst_mac, dst_port):
@@ -524,7 +524,7 @@ class ControllerApp(app_manager.OSKenApp):
 
             match = parser.OFPMatch(dl_dst=dst_mac)
             actions = [parser.OFPActionOutput(out_port)]
-            self.logger.info(f"Install path flow on s{dpid}: out={out_port} dst_mac={dst_mac}")
+            # self.logger.info(f"Install path flow on s{dpid}: out={out_port} dst_mac={dst_mac}")
             self.add_flow(dp, 1, match, actions)
 
     def dijkstra(self, src_dpid):
