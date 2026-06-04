@@ -975,14 +975,15 @@ A densely connected 2$\times$3 grid of six switches with additional diagonal cro
 
 \subsubsection{What It Verifies}
 
-The DHCP test suite validates that the controller's built-in DHCP server correctly allocates IP addresses to hosts, handling the complete DHCP lifecycle:
+The DHCP test suite validates the controller's built-in DHCP server across three interactive test files, covering the complete DHCP lifecycle --- from basic address allocation to edge cases such as pool exhaustion, duplicate defence, and lease timeouts:
 
 \begin{itemize}[leftmargin=1.5cm]
-    \item \textbf{Basic DHCP (\texttt{test\_network.py}):} Hosts broadcast a DHCP DISCOVER message and receive a valid OFFER with an IP from the configured pool. Hosts confirm the offered address via REQUEST and receive an ACK with correct lease parameters. Multiple hosts receive distinct IP addresses with no conflicts, and all allocated addresses fall within the pool range.
-    \item \textbf{DHCP RELEASE (\texttt{test\_network.py}):} (Bonus) A host releases its DHCP lease; the IP is returned to the pool and can be re-issued to another host. The test uses pool exhaustion to prove that a released IP is truly reclaimed.
-    \item \textbf{Duplicate IP Rejection (\texttt{test\_network.py}):} (Bonus) A host attempts to steal an IP that is already bound to another host. The server responds with DHCPNAK and either assigns a different IP or leaves the client without a valid address.
-    \item \textbf{Overflow (\texttt{test\_network\_overflow.py}):} (Bonus) Deploys more hosts than available pool addresses and verifies that the server correctly handles pool exhaustion --- the last host(s) fail to obtain an IP.
-    \item \textbf{Lease Expiry (\texttt{test\_lease\_expiry.py}):} (Bonus) Validates that expired leases are automatically reclaimed. Requires manually setting a short \texttt{Config.lease\_time} (e.g., 5 seconds) and a 2-IP pool (\texttt{end\_ip="192.168.1.3"}). Uses 3 hosts: h1 and h2 exhaust the pool, h1's dhclient is killed and IP stripped, then a fresh third host (h3) fails to obtain an IP before the timeout but succeeds afterward --- proving the lease expired and was reclaimed.
+    \item \textbf{Interactive Basic / Release / Duplicate Test (\texttt{test\_network.py}):} A single-switch, 3-host interactive test that exercises three distinct scenarios.\\
+    \textbf{TC1 --- Basic DHCP:} All three hosts send DHCP DISCOVER and receive valid OFFERs with IP addresses from the configured pool; each host confirms via REQUEST/ACK and obtains a unique, in-pool IP.\\
+    \textbf{TC2 (Bonus) --- DHCP RELEASE:} A host releases its lease via \texttt{dhclient -r}; the IP is returned to the pool and subsequently re-issued to another host. When the pool is small enough (e.g., 3 addresses for 3 hosts), the test uses pool exhaustion to prove reclamation by forcing the released IP to be the only available address. For larger pools, a lenient distinct-IP check is performed instead.\\
+    \textbf{TC3 (Bonus) --- Duplicate IP Rejection:} Host h2 manually adopts h1's IP address before sending a REQUEST. The server detects that the requested IP is bound to a different MAC, responds with DHCPNAK, and h2 ultimately receives a different IP (or no IP), confirming that duplicate allocation is prevented per RFC 2131.
+    \item \textbf{Overflow Test (\texttt{test\_network\_overflow.py}):} (Bonus) Deploys $m = n + \max(3, \lfloor n/3 \rfloor)$ hosts where $n$ is the pool size, guaranteeing more hosts than available IPs. All hosts run \texttt{dhclient} in parallel via \texttt{sendCmd}/\texttt{waitOutput}. The test verifies that exactly $n$ hosts receive valid in-pool addresses and the remaining $m-n$ hosts get no IP --- confirming that the server correctly rejects DISCOVERs (via NAK) when the pool is exhausted, rather than silently failing or crashing.
+    \item \textbf{Lease Expiry Test (\texttt{test\_lease\_expiry.py}):} (Bonus) Validates that timed-out leases are automatically reclaimed by \texttt{\_expire\_leases()}. Requires pre-configuration: \texttt{end\_ip="192.168.1.3"} (2-IP pool) and \texttt{lease\_time=5} (5-second leases). Three hosts are created. Steps: (1) h1 and h2 exhaust the 2-IP pool; (2) h1's \texttt{dhclient} is killed and its IP stripped --- the lease remains active server-side; (3) h3 (a fresh observer) requests an IP immediately and is rejected because the pool is still exhausted; (4) after waiting $\texttt{lease\_time}+2$ seconds, h3 requests again and now succeeds, receiving h1's old IP --- proving that h1's expired lease was reclaimed and the same address was re-issued.
 \end{itemize}
 
 \subsubsection{Test Topology}
@@ -1008,6 +1009,14 @@ The interactive test uses a single-switch topology with 3 hosts (to enable pool 
 \caption{DHCP Test Topology --- single switch, up to 3 hosts (h3 used for pool-exhaustion release tests)}
 \end{figure}
 
+\paragraph{Overflow Topology (used by \texttt{test\_network\_overflow.py})}
+
+Also a single-switch star topology, but with a dynamically computed number of hosts: $m = n + \max(3, \lfloor n/3 \rfloor)$, where $n$ is the IP pool size. For the default 9-IP pool (192.168.1.2--192.168.1.10), this produces $m = 12$ hosts, ensuring at least 3 hosts will fail to obtain an address. All hosts are connected to a single switch \texttt{s1} with \texttt{ip="no ip defined/8"}.
+
+\paragraph{Lease Expiry Topology (used by \texttt{test\_lease\_expiry.py})}
+
+Single-switch star with exactly 3 hosts (\texttt{h1}, \texttt{h2}, \texttt{h3}), each connected to switch \texttt{s1}. The test requires manual pre-configuration: \texttt{Config.end\_ip="192.168.1.3"} (2 IPs in pool) and \texttt{Config.lease\_time=5} (5-second lease). The smaller pool ensures exhaustion with only 2 hosts, and the short lease time makes the test practical to run.
+
 \subsubsection{Test Cases}
 
 \begin{table}[H]
@@ -1031,6 +1040,8 @@ The interactive test uses a single-switch topology with 3 hosts (to enable pool 
 \begin{center}
 \fbox{\textbf{\large All DHCP tests: PASSED} \checkmark}
 \end{center}
+
+\textbf{TODO: Paste experimental output here.}
 
 % ----------------------------------------
 \subsection{Firewall Tests}
